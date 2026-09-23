@@ -18,7 +18,7 @@ Nachts auf einem Streetball-Court mitten in der Stadt: Crossover, Dunks, Blocks 
 - **ON FIRE** 🔥 – 3 Treffer in Folge und dein grüner Bereich wird größer, bis der Gegner trifft
 - **Streetball-Regeln** – nach Rebound oder Steal musst du den Ball erst hinter die Dreierlinie **klären**
 - **14-Sekunden-Wurfuhr**, Spiel bis 11 oder 21
-- **Übungsmodus gegen Bots** (Rookie, Street, MVP) – im 2v2 mit Bot-Mitspieler
+- **Übungsmodus gegen Bots** (Rookie, Street, MVP, King) – im 2v2 mit Bot-Mitspieler
 - **Emotes** (🔥 😂 💪 GG …), Statistiken am Spielende, Revanche-Button
 - **Handy-Steuerung** mit Joystick und Buttons
 - Echte Ball-Physik (Ring, Brett, Netz), synthetisierte Sounds – keine externen Dateien
