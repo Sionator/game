@@ -19,6 +19,7 @@ const MIME = {
 
 const MOUNTS = [
   ['/shared/', path.join(ROOT, 'shared')],
+  ['/vendor/three/addons/', path.join(ROOT, 'node_modules', 'three', 'examples', 'jsm')],
   ['/vendor/three/', path.join(ROOT, 'node_modules', 'three', 'build')],
   ['/', path.join(ROOT, 'public')],
 ];

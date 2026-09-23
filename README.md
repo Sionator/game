@@ -22,6 +22,12 @@ Nachts auf einem Streetball-Court mitten in der Stadt: Crossover, Dunks, Blocks 
 - **Emotes** (🔥 😂 💪 GG …), Statistiken am Spielende, Revanche-Button
 - **Handy-Steuerung** mit Joystick und Buttons
 - Echte Ball-Physik (Ring, Brett, Netz), synthetisierte Sounds – keine externen Dateien
+- **Grafik:** Nacht-Court mit Flutlicht, mehreren Schatten, Lichtkegeln, Bloom, spiegelnden Pfützen,
+  Graffiti-Wand, Skyline mit Neonschildern und jubelnden Zuschauern; ein Netz, das sich um den Ball verformt
+- **Detaillierte Spieler:** durchgehende Haut mit Skelett (Skinning), modellierte Gesichter, viele Frisuren
+  (Afro, Dreads, Cornrows, Twists, Fade, …), Bärte, Tattoos, Sleeves, Stirnbänder, Ketten, Sneaker,
+  Trikots mit Teamname, Nummer und Name auf dem Rücken
+- **Grafikqualität** im Menü einstellbar (Hoch / Mittel / Niedrig) – am Handy automatisch „Mittel“
 
 ## Steuerung
 
@@ -91,7 +97,8 @@ Der Port wird über die Umgebungsvariable `PORT` gesetzt.
 - **Server** (`server/`): Node.js + `ws`. Autoritative Simulation mit 60 Ticks/s, 30 Snapshots/s an die Clients.
   Ball-Physik mit Ring-, Brett- und Netz-Kollision, Wurf-Genauigkeit abhängig von Timing, Distanz und Verteidigung.
 - **Client** (`public/`): Three.js. Eigene Bewegung wird lokal vorhergesagt (fühlt sich ohne Verzögerung an),
-  der Gegner wird flüssig interpoliert.
+  der Gegner wird flüssig interpoliert. Die 3D-Welt liegt in `public/js/gfx/` (Court, Korb, Stadt, Figuren, Effekte);
+  alle Modelle und Texturen werden prozedural erzeugt – es gibt keine Asset-Dateien.
 - **Gemeinsamer Code** (`shared/`): Konstanten und Bewegungsphysik, die Server und Client identisch benutzen.
 
 Tests (Wurfphysik + komplettes Bot-gegen-Bot-Spiel):

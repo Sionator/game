@@ -1,6 +1,7 @@
 // Client: Menü, Netzwerk, Steuerung, Vorhersage, HUD
 import { createWorld } from './scene.js';
 import { initAudio, sfx, toggleMute } from './audio.js';
+import { setQuality } from './gfx/quality.js';
 import { HOOP, METER, PLAYER, lerp, clamp, hoopDist, burstDir } from '/shared/constants.js';
 import { stepMove } from '/shared/sim.js';
 
@@ -167,6 +168,15 @@ function buildMenu() {
   $('#btnMenu').onclick = () => {
     if (confirm('Spiel verlassen?')) { send({ t: 'leave' }); S.room = null; leaveGame(); showScreen('menu'); }
   };
+
+  for (const b of document.querySelectorAll('#gfxSeg button')) {
+    b.classList.toggle('on', b.dataset.v === world.quality);
+    b.onclick = () => {
+      if (b.dataset.v === world.quality) return;
+      setQuality(b.dataset.v);
+      location.reload();
+    };
+  }
 
   const code = new URLSearchParams(location.search).get('room');
   if (code) {
@@ -522,6 +532,8 @@ function onEvent(e) {
       hoop.swish(e.dunk ? 1.6 : e.swish ? 1.2 : 0.9);
       sfx.cheer(e.pts === 3 || e.dunk || e.fire);
       if (!e.dunk) sfx.swish();
+      world.cheer(e.pts === 3 || e.dunk ? 1.5 : 1);
+      for (const id in S.views) if (teamOf(id) === e.team) S.views[id].celebrate();
       const col = new THREE.Color(colorOf(e.id));
       fx.burst(HOOP.x, HOOP.y - 0.3, HOOP.z, [col, 0xffffff, 0xffd23f], e.pts === 3 || e.dunk ? 90 : 45, e.dunk ? 5 : 3.5);
       const t = e.dunk ? 'DUNK! 💥' : e.pts === 3 ? (e.swish ? 'SWISH – DREIER!' : 'DREIER!') : e.swish ? 'SWISH!' : '+2';
@@ -585,6 +597,7 @@ function onEvent(e) {
     case 'dunk':
       sfx.dunk();
       S.shake = 0.45;
+      fx.shock(HOOP.x, 0, HOOP.z + 0.6);
       break;
     case 'pickup':
       if (e.rebound) feed(`Rebound ${nameOf(e.id)}`, colorOf(e.id));
@@ -596,8 +609,8 @@ function onEvent(e) {
     case 'fireOut': feed(`${nameOf(e.id)} ist abgekühlt 🧊`); break;
     case 'snd':
       if (e.s === 'bounce') sfx.bounce(e.v);
-      else if (e.s === 'rim') sfx.rim(e.v);
-      else if (e.s === 'board') sfx.board(e.v);
+      else if (e.s === 'rim') { sfx.rim(e.v); hoop.rimHit(e.v); }
+      else if (e.s === 'board') { sfx.board(e.v); hoop.boardHit(e.v); }
       break;
     case 'emote': if (v) { v.showEmote(EMOTES[e.e] || '?'); sfx.click(); } break;
     case 'over': {
@@ -772,8 +785,7 @@ function frame(now) {
     if (S.camOverride) S.camOverride(camera);
     ball.position.set(Math.sin(time * 0.7) * 2, BALL_BOUNCE(time), 5 + Math.cos(time * 0.7) * 2);
   }
-  hoop.update(dt, time);
-  fx.update(dt);
+  world.update(dt, time);
   world.render();
 }
 
@@ -817,6 +829,7 @@ function updateGame(dt, now) {
     if (axis.lengthSq() > 0) ball.rotateOnWorldAxis(axis, holder ? dist / 0.12 : -dist / 0.12);
   }
   if (fireBall) fx.fire(ball.position.x, ball.position.y, ball.position.z, 3);
+  else if (!holder && (samp.ball.s || samp.ball.pa) && dist > 0.05) fx.trail(ball.position.x, ball.position.y, ball.position.z);
 
   // Kamera
   const L = myState || lerpP(S.myId) || { x: 0, z: 8 };
@@ -880,7 +893,7 @@ function updateHud(s, me, now) {
   if (needClear) {
     const mat = world.clearLine.material;
     mat.opacity = 0.5 + Math.sin(now / 150) * 0.35;
-    mat.color.set(ourBall ? 0xffb020 : 0x94a3b8);
+    mat.color.set(ourBall ? 0xffb020 : 0x94a3b8).multiplyScalar(ourBall ? 2.2 : 1);
   }
 
   if (me) $('#stamina div').style.width = Math.round(me.sta * 100) + '%';

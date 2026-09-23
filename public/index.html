@@ -8,7 +8,7 @@
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏀</text></svg>">
   <link rel="stylesheet" href="style.css">
   <script type="importmap">
-    { "imports": { "three": "/vendor/three/three.module.js" } }
+    { "imports": { "three": "/vendor/three/three.module.js", "three/addons/": "/vendor/three/addons/" } }
   </script>
 </head>
 <body>
@@ -36,6 +36,14 @@
         <div class="seg" id="targetSeg">
           <button data-v="11" class="on">11 Punkte</button>
           <button data-v="21">21 Punkte</button>
+        </div>
+      </div>
+
+      <div class="field">Grafik
+        <div class="seg" id="gfxSeg">
+          <button data-v="high">Hoch</button>
+          <button data-v="mid">Mittel</button>
+          <button data-v="low">Niedrig</button>
         </div>
       </div>
 
