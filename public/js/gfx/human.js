@@ -92,7 +92,7 @@ float skinHeight(vec2 uv, float lip) {
   float fine = sdNoise(uv * vec2(260.0, 170.0)) * 0.5 * aaF;
   float lines = (sin(uv.x * 2600.0 + sdNoise(uv * 90.0) * 6.0) * 0.5 + 0.5) * aaP;       // Lippenrillen (senkrecht)
   float forehead = smoothstep(0.62, 0.7, uv.y) * (sin(uv.y * 900.0 + sdNoise(uv * 40.0) * 5.0) * 0.5 + 0.5) * 0.25;
-  return mix(pores * 0.35 + fine * 0.25 + forehead, lines * 0.5, lip) * 0.012;
+  return mix(pores * 0.12 + fine * 0.08, lines * 0.25, lip) * 0.012;
 }
 vec3 skinPerturb(vec3 surf_pos, vec3 surf_norm, vec2 dHdxy, float faceDir) {
   vec3 vSigmaX = normalize(dFdx(surf_pos)), vSigmaY = normalize(dFdy(surf_pos));
@@ -285,7 +285,8 @@ function composeSkin(A, o) {
     const nn = (nz((px * step) >> 2, (py * step) >> 2) + nz((px * step) >> 4, (py * step) >> 4)) * 0.5 - 0.5;
     // Grundton mit AO, leicht rötlich in Falten
     const aoS = Math.pow(ao, 1.35);
-    let r = sk.r * (0.5 + 0.5 * aoS) * (1 + nn * 0.06), gg = sk.g * (0.46 + 0.54 * aoS) * (1 + nn * 0.06), b = sk.b * (0.44 + 0.56 * aoS) * (1 + nn * 0.05);
+    // weiche Verdeckung (tiefe Augenhöhlen wirkten unheimlich), kaum Hautrauschen
+    let r = sk.r * (0.7 + 0.3 * aoS) * (1 + nn * 0.03), gg = sk.g * (0.67 + 0.33 * aoS) * (1 + nn * 0.03), b = sk.b * (0.65 + 0.35 * aoS) * (1 + nn * 0.025);
     // Gesichtsdetails: durchblutete Wangen, Nase und Ohren, Schatten unter den Augen und in der Lidfalte
     let rough = 0.62;
     if (y > 6.0 && y < 8.0 && z > -0.4) {
@@ -293,7 +294,7 @@ function composeSkin(A, o) {
       const gs = (cx, cy, cz, rr) => Math.exp(-((ax - cx) ** 2 + (y - cy) ** 2 + (z - cz) ** 2) / (rr * rr));
       const blush = gs(0.52, 6.95, 1.2, 0.3) * 0.28 + gs(0, 6.95, 1.62, 0.2) * 0.22 + (ax > 0.62 && y > 6.85 && y < 7.65 && z < 0.8 ? 0.22 : 0);
       if (blush > 0.01) { r *= 1 + blush * 0.12; gg *= 1 - blush * 0.14; b *= 1 - blush * 0.12; }
-      const under = gs(0.32, 7.13, 1.32, 0.14) * 0.06 + gs(0.31, 7.43, 1.36, 0.1) * 0.08;
+      const under = gs(0.31, 7.43, 1.36, 0.1) * 0.03;
       if (under > 0.01) { r *= 1 - under; gg *= 1 - under * 1.1; b *= 1 - under * 0.9; }
       // T-Zone und Nasenspitze glänzen etwas mehr
       rough -= gs(0, 7.0, 1.62, 0.22) * 0.16 + (ax < 0.35 && y > 7.55 && z > 1.0 ? 0.08 : 0);
@@ -718,6 +719,7 @@ export class PlayerView {
         };
       })() : null,
     };
+    this.skinHex = skinHex;
     const skinTex = composeSkin(A, skinOpts);
     // Gesicht/Kopf in eigener, ~3× feinerer Textur (gleiche Malregeln → nahtlos überblendet)
     const faceTex = composeSkin(A, { ...skinOpts, imgs: A.face });
@@ -726,7 +728,7 @@ export class PlayerView {
       sheenColor: new THREE.Color(skinHex).lerp(new THREE.Color(0xff9f80), 0.45),
       normalMap: poreNormal(), normalScale: new THREE.Vector2(0.09, 0.09), specularIntensity: 0.45,
       // warmes Streulicht (Fake-Subsurface): hebt Schatten rötlich an statt grau
-      emissive: new THREE.Color(0xff8a6a), emissiveMap: skinTex, emissiveIntensity: 0.08,
+      emissive: new THREE.Color(0xff9a7a), emissiveMap: skinTex, emissiveIntensity: 0.14,
     });
     skinMat.customProgramCacheKey = () => 'skinFace';
     skinMat.onBeforeCompile = (sh) => {
@@ -741,7 +743,7 @@ export class PlayerView {
         .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\n  roughnessFactor = mix(roughnessFactor, roughness * texture2D(faceRough, vFaceUv).g, vFaceW);')
         .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n  totalEmissiveRadiance = mix(totalEmissiveRadiance, emissive * faceCol, vFaceW);')
         // weiches Streiflicht an den Konturen (Haut streut Licht an flachen Winkeln) → Gesicht löst sich vom Hintergrund
-        .replace('#include <opaque_fragment>', '  float rimF = pow(1.0 - clamp(dot(normal, normalize(vViewPosition)), 0.0, 1.0), 3.0);\n  outgoingLight += diffuseColor.rgb * vec3(1.0, 0.72, 0.6) * rimF * 0.35;\n#include <opaque_fragment>');
+        .replace('#include <opaque_fragment>', '  float rimF = pow(1.0 - clamp(dot(normal, normalize(vViewPosition)), 0.0, 1.0), 3.0);\n  outgoingLight += diffuseColor.rgb * vec3(1.0, 0.72, 0.6) * rimF * 0.35;\n  outgoingLight += diffuseColor.rgb * vec3(1.0, 0.9, 0.85) * 0.22 * vFaceW;   // weiches Fülllicht im Gesicht\n#include <opaque_fragment>');
     };
     const number = look ? String(look.num) : isKing ? '1' : String((seed % 98) + 1);
     const jerseyMat = crowd ? null : new THREE.MeshPhysicalMaterial({
@@ -788,7 +790,7 @@ export class PlayerView {
       }
     };
     this.faceMeshes.forEach(this.applyShape);
-    this.faceW = {}; this.blinkT = 1 + Math.random() * 3; this.blinkP = -1; this.mood = (rnd() - 0.3) * 0.25;
+    this.faceW = {}; this.blinkT = 1 + Math.random() * 3; this.blinkP = -1; this.mood = 0.3 + rnd() * 0.25;                             // freundliche Grundmiene
     // Binden in der Ruhepose (alle Knochen ohne Rotation), erst danach Korrekturen/Posen setzen
     this.root.updateMatrixWorld(true);
     for (const m of meshes) m.bind(skeleton);
@@ -832,16 +834,16 @@ export class PlayerView {
   float fib = 0.75 + 0.25 * eh(vec2(floor(phi * 40.0), 1.0)) + 0.12 * sin(phi * 23.0 + rho * 40.0);
   vec3 iris = irisCol * fib * (0.6 + 0.8 * smoothstep(0.14, 0.4, rho));    // innen dunkler, außen heller
   iris = mix(iris, irisCol * 0.22, smoothstep(0.38, 0.45, rho));            // Limbus-Ring
-  vec3 sclera = vec3(0.80, 0.76, 0.72);
+  vec3 sclera = vec3(0.9, 0.87, 0.84);
   float vein = smoothstep(0.93, 1.0, eh(vec2(floor(phi * 60.0), floor(rho * 14.0)))) * smoothstep(0.6, 0.95, rho);
   sclera = mix(sclera, vec3(0.85, 0.45, 0.42), vein * 0.5 + smoothstep(0.7, 1.0, rho) * 0.12);
   vec3 col = mix(iris, sclera, smoothstep(0.45, 0.49, rho));
   col = mix(vec3(0.015), col, smoothstep(0.13, 0.16, rho));                // Pupille
-  float lid = (1.0 - 0.6 * smoothstep(0.05, 0.55, ep.y)) * (1.0 - 0.25 * smoothstep(0.2, 0.6, -ep.y));                     // Schatten vom Oberlid
-  float corner = 1.0 - 0.45 * smoothstep(0.55, 0.95, rho);
+  float lid = 1.0 - 0.35 * smoothstep(0.15, 0.6, ep.y);                     // Schatten vom Oberlid
+  float corner = 1.0 - 0.25 * smoothstep(0.6, 1.0, rho);
   diffuseColor.rgb *= col * lid * corner;
   // Lichtreflex (Flutlicht von oben) und feuchter Rand am Unterlid
-  float cl = smoothstep(0.075, 0.04, length(ep.xy - vec2(-0.16, 0.2))) * step(0.0, vEyeP.z);
+  float cl = smoothstep(0.1, 0.06, length(ep.xy - vec2(-0.14, 0.17))) * step(0.0, vEyeP.z) + smoothstep(0.045, 0.02, length(ep.xy - vec2(0.12, -0.12))) * step(0.0, vEyeP.z) * 0.6;
   diffuseColor.rgb = mix(diffuseColor.rgb, vec3(1.6), cl * 0.85);
   diffuseColor.rgb += vec3(0.08, 0.05, 0.05) * smoothstep(0.55, 0.75, -ep.y) * step(0.0, vEyeP.z);`);
     };
@@ -1125,7 +1127,7 @@ export class PlayerView {
       const em = exprMorphs(A, 'brow', vi);
       if (em) { g.morphAttributes.position = em; g.morphTargetsRelative = true; }
       const tv = new THREE.Vector3();
-      const browMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(hairHex).lerp(new THREE.Color(0x6b4a33), 0.3), roughness: 0.75, alphaTest: 0.5 });
+      const browMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(hairHex).lerp(new THREE.Color(this.skinHex), 0.25).lerp(new THREE.Color(0x6b4a33), 0.25), roughness: 0.75, alphaTest: 0.5 });
       browMat.customProgramCacheKey = () => 'brows3d';
       browMat.onBeforeCompile = (sh) => {
         sh.vertexShader = 'attribute vec3 bpos;\nattribute float hlay;\nvarying vec3 vB;\nvarying float vLay;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n  vB = bpos; vLay = hlay;');
@@ -1133,7 +1135,7 @@ export class PlayerView {
   float bx = abs(vB.x), t = (bx - 0.07) / 0.5;
   float by = 7.56 + sin(clamp(t, 0.0, 1.0) * 3.14159 * 0.85) * 0.07;
   float th = 0.05 * (1.0 - 0.55 * max(0.0, t));
-  float m = (1.0 - smoothstep(th * 0.25, th * 1.05, abs(vB.y - by))) * (1.0 - smoothstep(0.88, 1.05, t)) * smoothstep(-0.04, 0.08, t);
+  float m = (1.0 - smoothstep(th * 0.2, th * 0.85, abs(vB.y - by))) * (1.0 - smoothstep(0.88, 1.05, t)) * smoothstep(-0.04, 0.08, t);
   // Härchen: schräg nach außen oben wachsend, innen steiler
   float ang = mix(1.1, 0.25, clamp(t, 0.0, 1.0));
   vec2 q = vec2(bx, vB.y);
@@ -1141,7 +1143,7 @@ export class PlayerView {
   float along = dot(q, d), across = dot(q, vec2(-d.y, d.x));
   float cell = floor(across * 380.0);
   float h = fract(sin(cell * 12.9898 + floor(along * 22.0) * 78.233) * 43758.5453);
-  float hair = step(1.0 - m * (0.72 - vLay * 0.3), h);
+  float hair = step(1.0 - m * (0.55 - vLay * 0.25), h);
   diffuseColor.a = hair * step(0.05, m);
   diffuseColor.rgb *= 0.75 + 0.35 * h;
 #include <alphatest_fragment>`);
@@ -1440,11 +1442,12 @@ export class PlayerView {
     const both = (u, w) => { F[u.replace('*', 'left')] = w; F[u.replace('*', 'right')] = w; };
     F['mouth-corner-puller'] = Math.max(0, this.mood);                 // Grundstimmung
     F['mouth-depression'] = Math.max(0, -this.mood);
-    F['mouth-open'] = 0.04 + 0.03 * Math.max(0, breath);
+    F['mouth-open'] = 0;
+    both('eyebrows-*-up', 0.12);                                      // offener, wacher Blick
     if (A > 0.5) {                                                     // Sprint: Atmen durch den Mund, Anstrengung
       F['mouth-open'] = 0.18 + 0.12 * Math.abs(Math.sin(t * 5)); both('eyebrows-*-down', 0.25 * A); F['mouth-retraction'] = 0.15;
     }
-    if (s.defending && !air) { both('eyebrows-*-down', 0.55); both('eye-*-slit', 0.3); F['mouth-compression'] = 0.35; }
+    if (s.defending && !air) { both('eyebrows-*-down', 0.3); both('eye-*-slit', 0.12); F['mouth-compression'] = 0.2; }
     if (s.hasBall && !shooting && !air) { both('eyebrows-*-down', 0.3); F['mouth-compression'] = 0.2; }
     if (shooting) { both('eye-*-slit', 0.3); F['mouth-compression'] = 0.5; F['mouth-corner-puller'] = 0; both('eyebrows-*-down', 0.2); }
     if (s.st === 'dunk') {                                             // Schrei beim Dunk

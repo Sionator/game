@@ -99,7 +99,10 @@ const VARIANTS = [
 ];
 // Gesichtszüge je Variante (MakeHuman-Detail-Targets; beidseitige werden gespiegelt gesetzt)
 // Augen etwas weiter geöffnet, weniger Tränensäcke (wirkt wacher als das MakeHuman-Grundgesicht)
-const FACE_EYES = { 'eyes/eye-height2-incr': 0.45, 'eyes/eye-bag-decr': 0.6, 'eyes/eye-bag-height-decr': 0.3, 'eyes/eye-eyefold-up': 0.25 };
+// Freundlicher, jünger: größere, offenere Augen, keine Tränensäcke, weichere Gesichtszüge
+const FACE_EYES = { 'eyes/eye-height2-incr': 0.55, 'eyes/eye-scale-incr': 0.45, 'eyes/eye-bag-decr': 0.9, 'eyes/eye-bag-height-decr': 0.4,
+  'eyes/eye-eyefold-up': 0.35, 'eyes/eye-push1-out': 0.25, 'head/head-age-decr': 0.45, 'head/head-fat-incr': 0.22,
+  'cheek/cheek-volume-incr': 0.45, 'cheek/cheek-inner-incr': 0.25, 'mouth/mouth-angles-up': 0.35, 'mouth/mouth-dimples-in': 0.2 };
 const FACE_BASE_M = { 'chin/chin-width-incr': 0.3, 'chin/chin-prominent-incr': 0.25, 'cheek/cheek-bones-incr': 0.35, 'head/head-square': 0.25,
   'eyebrows/eyebrows-trans-up': 0.25, 'mouth/mouth-upperlip-volume-incr': 0.2, 'nose/nose-point-width-decr': 0.15, 'neck/neck-scale-horiz-incr': 0.2 };
 const FACE_BASE_F = { 'head/head-oval': 0.45, 'cheek/cheek-bones-incr': 0.4, 'chin/chin-width-decr': 0.25, 'eyebrows/eyebrows-trans-up': 0.3,
