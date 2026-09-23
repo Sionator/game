@@ -443,7 +443,20 @@ const helperEye = (P, s) => {
 
 // ------------------------------------------------------------------ Varianten berechnen
 const variants = [];
-const blocks = { body, jersey, shorts, scalp, beard, lashes };
+// Augenbrauen als eigene Fläche (für echte Härchen-Lagen); gleiche Form wie die gemalte Brauenmaske
+function browMask(x, y, z) {
+  const sm = (a, b, v) => { const t = Math.max(0, Math.min(1, (v - a) / (b - a))); return t * t * (3 - 2 * t); };
+  const t = (Math.abs(x) - 0.07) / 0.5;
+  const browY = 7.56 + Math.sin(Math.max(0, Math.min(1, t)) * Math.PI * 0.85) * 0.07;
+  const thick = 0.05 * (1 - 0.55 * Math.max(0, t));
+  if (!(t > -0.05 && t < 1.1 && z > 1.0)) return 0;
+  return (1 - sm(thick * 0.6, thick * 1.6, Math.abs(y - browY))) * (1 - sm(0.9, 1.08, t)) * sm(-0.05, 0.1, t);
+}
+const browFaces = bodyFaces.filter((f) => f.v.some((v) => browMask(bx(v), by(v), bz(v)) > 0.02) && f.v.every((v) => headW(v) > 0.5));
+const brow = makeBlock(browFaces, (v) => [bx(v) * 0.5 + 0.5, by(v) - 7]);
+const browVal = Float32Array.from(brow.orig, (v) => browMask(bx(v), by(v), bz(v)));
+log('Brauen', brow.orig.length, 'V');
+const blocks = { body, jersey, shorts, scalp, beard, lashes, brow };
 for (const cfg of VARIANTS) {
   const P = morph(cfg);
   let minY = Infinity, maxY0 = -Infinity;
@@ -864,7 +877,9 @@ const sparse = (list) => {
 };
 for (const [ax, [plus, minus]] of Object.entries(SHAPE)) header.shape.units[ax] = { p: sparse(plus), m: sparse(minus) };
 log('Gesichtsform', Object.keys(SHAPE).length, 'Achsen');
-for (const n of ['body', 'lashes', 'beard']) header.blocks[n].orig = push(Uint16Array.from(blocks[n].orig));
+header.blocks.brow.val = push(browVal);
+header.blocks.brow.bpos = push(Float32Array.from(Array.from(brow.orig).flatMap((v) => [bx(v), by(v), bz(v)])));
+for (const n of ['body', 'lashes', 'beard', 'brow']) header.blocks[n].orig = push(Uint16Array.from(blocks[n].orig));
 log('Mimik', EXPR.length, 'Einheiten,', exprN, 'Deltas');
 header.eye = { pos: push(eyeLocal), uv: push(Float32Array.from(eyeUv)), index: push(Uint16Array.from(eyeIdx)), cornea: push(Uint16Array.from(corneaIdx)) };
 const hjson = Buffer.from(JSON.stringify(header));

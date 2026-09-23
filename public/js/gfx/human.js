@@ -235,6 +235,9 @@ function composeSkin(A, o) {
   const nz = (x, y) => noise[(y & (NW - 1)) * NW + (x & (NW - 1))];
   const kx = (bb.max[0] - bb.min[0]) / 255, ky = (bb.max[1] - bb.min[1]) / 255, kz = (bb.max[2] - bb.min[2]) / 255;
   const tat = o.tattoo;
+  // ein paar Leberflecke/Sommersprossen im Gesicht (je Spieler anders)
+  const moles = [];
+  for (let k = 0, n = Math.floor(rnd() * 4); k < n; k++) moles.push([(rnd() - 0.5) * 1.2, 6.5 + rnd() * 1.1, 0.035 + rnd() * 0.03]);
   for (let i = 0, n = W * H; i < n; i++) {
     const o4 = i * 4, s4 = step === 1 ? o4 : (((i / W) | 0) * step * SW + (i % W) * step) * 4;
     const ao = m[s4] / 255, lips = m[s4 + 1] / 255, brow = m[s4 + 2] / 255, scalp = mb[s4] / 255, stub = mb[s4 + 1] / 255;
@@ -255,6 +258,11 @@ function composeSkin(A, o) {
       if (under > 0.01) { r *= 1 - under; gg *= 1 - under * 1.1; b *= 1 - under * 0.9; }
       // T-Zone und Nasenspitze glänzen etwas mehr
       rough -= gs(0, 7.0, 1.62, 0.22) * 0.16 + (ax < 0.35 && y > 7.55 && z > 1.0 ? 0.08 : 0);
+    }
+    for (const [mx, my, mr] of moles) {
+      if (z < 1.0) break;
+      const dd = Math.hypot(x - mx, y - my);
+      if (dd < mr) { const k = 0.35 * (1 - dd / mr); r *= 1 - k; gg *= 1 - k * 1.2; b *= 1 - k * 1.1; }
     }
     // Lachfalte und Lippenrand leicht abdunkeln (mehr Plastizität)
     if (y > 6.4 && y < 7.05 && z > 1.0) {
@@ -279,7 +287,8 @@ function composeSkin(A, o) {
       const strands = nz(px >> 1, py) * 0.6 + nz(px >> 2, py >> 1) * 0.4;       // feine, waagrechte Härchen
       // einzelne Härchen: dichter Kern, ausgedünnter Rand; Farbe etwas heller als das Kopfhaar
       const hairs = nz(px, py >> 1) > 1 - Math.pow(brow, 1.2) * 0.95 ? 1 : 0;
-      const t = Math.min(1, (Math.pow(brow, 2) * 0.3 + hairs * 0.38) * (0.4 + 0.6 * strands));
+      // 3D-Brauen liegen darüber → hier nur ein zarter Untergrund, damit keine Haut durchblitzt
+      const t = Math.min(1, (Math.pow(brow, 2) * 0.3 + hairs * 0.38) * (0.4 + 0.6 * strands)) * 0.45;
       r += (hair.r * 0.8 - r) * t; gg += (hair.g * 0.8 - gg) * t; b += (hair.b * 0.8 - b) * t;
     }
     // Gemalte kurze Haare (Buzz, Fade, Waves)
@@ -685,7 +694,9 @@ export class PlayerView {
       sh.fragmentShader = 'uniform sampler2D faceMap;\nuniform sampler2D faceRough;\nvarying vec2 vFaceUv;\nvarying float vFaceW;\n' + sh.fragmentShader
         .replace('#include <map_fragment>', '#include <map_fragment>\n  vec3 faceCol = texture2D(faceMap, vFaceUv).rgb;\n  diffuseColor.rgb = mix(diffuseColor.rgb, faceCol * diffuse, vFaceW);')
         .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\n  roughnessFactor = mix(roughnessFactor, roughness * texture2D(faceRough, vFaceUv).g, vFaceW);')
-        .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n  totalEmissiveRadiance = mix(totalEmissiveRadiance, emissive * faceCol, vFaceW);');
+        .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n  totalEmissiveRadiance = mix(totalEmissiveRadiance, emissive * faceCol, vFaceW);')
+        // weiches Streiflicht an den Konturen (Haut streut Licht an flachen Winkeln) → Gesicht löst sich vom Hintergrund
+        .replace('#include <opaque_fragment>', '  float rimF = pow(1.0 - clamp(dot(normal, normalize(vViewPosition)), 0.0, 1.0), 3.0);\n  outgoingLight += diffuseColor.rgb * vec3(1.0, 0.72, 0.6) * rimF * 0.35;\n#include <opaque_fragment>');
     };
     const number = look ? String(look.num) : isKing ? '1' : String((seed % 98) + 1);
     const jerseyMat = crowd ? null : new THREE.MeshPhysicalMaterial({
@@ -776,13 +787,13 @@ export class PlayerView {
   float fib = 0.75 + 0.25 * eh(vec2(floor(phi * 40.0), 1.0)) + 0.12 * sin(phi * 23.0 + rho * 40.0);
   vec3 iris = irisCol * fib * (0.6 + 0.8 * smoothstep(0.14, 0.4, rho));    // innen dunkler, außen heller
   iris = mix(iris, irisCol * 0.22, smoothstep(0.38, 0.45, rho));            // Limbus-Ring
-  vec3 sclera = vec3(0.93, 0.90, 0.87);
+  vec3 sclera = vec3(0.80, 0.76, 0.72);
   float vein = smoothstep(0.93, 1.0, eh(vec2(floor(phi * 60.0), floor(rho * 14.0)))) * smoothstep(0.6, 0.95, rho);
   sclera = mix(sclera, vec3(0.85, 0.45, 0.42), vein * 0.5 + smoothstep(0.7, 1.0, rho) * 0.12);
   vec3 col = mix(iris, sclera, smoothstep(0.45, 0.49, rho));
   col = mix(vec3(0.015), col, smoothstep(0.13, 0.16, rho));                // Pupille
-  float lid = 1.0 - 0.45 * smoothstep(0.1, 0.6, ep.y);                     // Schatten vom Oberlid
-  float corner = 1.0 - 0.3 * smoothstep(0.65, 1.0, rho);
+  float lid = (1.0 - 0.6 * smoothstep(0.05, 0.55, ep.y)) * (1.0 - 0.25 * smoothstep(0.2, 0.6, -ep.y));                     // Schatten vom Oberlid
+  float corner = 1.0 - 0.45 * smoothstep(0.55, 0.95, rho);
   diffuseColor.rgb *= col * lid * corner;`);
     };
     // Hornhaut: fast unsichtbar, aber mit scharfem Glanzpunkt → lebendiger Blick
@@ -1046,6 +1057,51 @@ export class PlayerView {
         brim.castShadow = true;
         this.head.add(brim);
       }
+    }
+    // Augenbrauen: echte Härchen-Lagen; Brauenform pro Pixel aus der Basis-Mesh-Position (scharf trotz grober Dreiecke)
+    if (H.blocks.brow && H.blocks.brow.bpos) {
+      const bb = H.blocks.brow, bv = H.variants[vi].blocks.brow;
+      const bp = A.arr(bv.pos), bn = A.arr(bv.nrm), cnt = bb.count;
+      const pos = new Float32Array(cnt * 3), bOut = [];
+      for (let i = 0; i < cnt; i++) {
+        const nn = new THREE.Vector3(bn[i * 3] / 127, bn[i * 3 + 1] / 127, bn[i * 3 + 2] / 127).normalize();
+        const p = new THREE.Vector3(bp[i * 3] / 13000, bp[i * 3 + 1] / 13000, bp[i * 3 + 2] / 13000).addScaledVector(nn, 0.0004).sub(headRest);
+        pos.set([p.x, p.y, p.z], i * 3);
+        bOut.push(nn.multiplyScalar(0.0011));
+      }
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      g.setAttribute('bpos', new THREE.BufferAttribute(A.arr(bb.bpos), 3));
+      g.setIndex(new THREE.BufferAttribute(Uint16Array.from(A.arr(bb.index)), 1));
+      const em = exprMorphs(A, 'brow', vi);
+      if (em) { g.morphAttributes.position = em; g.morphTargetsRelative = true; }
+      const tv = new THREE.Vector3();
+      const browMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(hairHex).lerp(new THREE.Color(0x6b4a33), 0.3), roughness: 0.75, alphaTest: 0.5 });
+      browMat.customProgramCacheKey = () => 'brows3d';
+      browMat.onBeforeCompile = (sh) => {
+        sh.vertexShader = 'attribute vec3 bpos;\nattribute float hlay;\nvarying vec3 vB;\nvarying float vLay;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n  vB = bpos; vLay = hlay;');
+        sh.fragmentShader = 'varying vec3 vB;\nvarying float vLay;\n' + sh.fragmentShader.replace('#include <alphatest_fragment>', `
+  float bx = abs(vB.x), t = (bx - 0.07) / 0.5;
+  float by = 7.56 + sin(clamp(t, 0.0, 1.0) * 3.14159 * 0.85) * 0.07;
+  float th = 0.05 * (1.0 - 0.55 * max(0.0, t));
+  float m = (1.0 - smoothstep(th * 0.25, th * 1.05, abs(vB.y - by))) * (1.0 - smoothstep(0.88, 1.05, t)) * smoothstep(-0.04, 0.08, t);
+  // Härchen: schräg nach außen oben wachsend, innen steiler
+  float ang = mix(1.1, 0.25, clamp(t, 0.0, 1.0));
+  vec2 q = vec2(bx, vB.y);
+  vec2 d = vec2(cos(ang), sin(ang));
+  float along = dot(q, d), across = dot(q, vec2(-d.y, d.x));
+  float cell = floor(across * 380.0);
+  float h = fract(sin(cell * 12.9898 + floor(along * 22.0) * 78.233) * 43758.5453);
+  float hair = step(1.0 - m * (0.72 - vLay * 0.3), h);
+  diffuseColor.a = hair * step(0.05, m);
+  diffuseColor.rgb *= 0.75 + 0.35 * h;
+#include <alphatest_fragment>`);
+      };
+      const mesh = new THREE.Mesh(layered(g, 3, ['bpos'], (i, lf) => tv.copy(bOut[i]).multiplyScalar(lf)), browMat);
+      this.head.add(mesh);
+      this.faceMeshes.push(mesh);
+      this.applyShape(mesh);
+      this.hasBrows3d = true;
     }
     // Bart
     if (beard === 'beard' || beard === 'goatee') {
