@@ -333,7 +333,7 @@ const headW = (v) => boneWeight(v, ['head']);
 const azim = (x, z) => Math.atan2(x, z - HC[2]);  // 0 = vorne
 function hairlineY(x, z) {
   const a = Math.abs(azim(x, z));
-  const pts = [[0, 8.08], [0.45, 8.04], [0.75, 7.92], [1.0, 7.8], [1.2, 7.52], [1.38, 7.1], [1.55, 7.45], [1.85, 7.55], [2.3, 7.05], [Math.PI, 6.85]];
+  const pts = [[0, 7.96], [0.45, 7.92], [0.75, 7.82], [1.0, 7.7], [1.2, 7.52], [1.38, 7.1], [1.55, 7.45], [1.85, 7.55], [2.3, 7.05], [Math.PI, 6.85]];
   for (let k = 1; k < pts.length; k++) if (a <= pts[k][0]) { const t = (a - pts[k - 1][0]) / (pts[k][0] - pts[k - 1][0]); return pts[k - 1][1] + t * (pts[k][1] - pts[k - 1][1]); }
   return 6.85;
 }

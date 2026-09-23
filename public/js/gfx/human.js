@@ -488,11 +488,11 @@ export class PlayerView {
     let style = pick(female ? STYLES_F : STYLES_M);
     if (info.hairStyle) style = info.hairStyle;
     const beard = female ? 'none' : pick(['none', 'none', 'stubble', 'stubble', 'beard', 'goatee']);
-    const painted = ['buzz', 'fade', 'waves'].includes(style) ? style : ['dreads', 'twists', 'afro', 'cornrows', 'bun', 'hightop'].includes(style) ? 'fade' : null;
+    const painted = ['buzz', 'fade', 'waves'].includes(style) ? style : ['dreads', 'twists', 'afro', 'cornrows', 'bun'].includes(style) ? 'buzz' : style === 'hightop' ? 'fade' : null;
     const sockHex = rnd() < 0.55 ? '#f2f2f2' : '#15171c';
     const skinTex = composeSkin(A, {
       seed, skin: skinHex, lip: shade(skinHex, ethn === 'african' ? 0.72 : 0.86).replace('#', '#'), hair: hairHex, painted,
-      stubble: beard === 'stubble' ? 0.55 : beard === 'beard' || beard === 'goatee' ? 0.4 : 0,
+      stubble: beard === 'stubble' ? 0.32 : beard === 'beard' || beard === 'goatee' ? 0.25 : 0,
       sock: sockHex, sockStripe: rnd() < 0.5 ? info.color : (sockHex === '#f2f2f2' ? '#15171c' : '#f2f2f2'),
       sockTop: -6.3 - rnd() * 0.6,
       tights: rnd() < 0.15, kneeSleeve: rnd() < 0.3 ? pick(['L', 'R']) : null, armSleeve: rnd() < 0.3,
@@ -622,8 +622,8 @@ export class PlayerView {
     const kind = style === 'cornrows' ? 'cornrows' : ['afro', 'twists'].includes(style) ? 'coil' : 'strands';
     const tex = hairTexture(hairHex, kind);
     // Haaransatz pro Pixel aus dem interpolierten Abstand zur Haarlinie (dm) → scharfe Kante auch bei großen Dreiecken
-    const short = ['buzz', 'fade', 'waves'].includes(style);
-    const ha = { afro: [-0.03, 0.03, 1], hightop: [0.22, 0.3, 1], fade: [0.25, 0.55, 0.85], buzz: [-0.05, 0.12, 0.85], waves: [-0.05, 0.12, 0.85] }[style] || [-0.04, 0.04, 1];
+    const short = ['buzz', 'fade', 'waves', 'hightop'].includes(style);
+    const ha = { afro: [-0.03, 0.03, 1], hightop: [0.25, 0.55, 0.85], fade: [0.25, 0.55, 0.85], buzz: [-0.05, 0.12, 0.85], waves: [-0.05, 0.12, 0.85] }[style] || [-0.04, 0.04, 1];
     // Physikalisch mit Sheen: dunkles Haar bekommt einen weichen, faserigen Glanz statt schwarzer Fläche
     const mat = new THREE.MeshPhysicalMaterial({
       map: tex.map, bumpMap: tex.bump, bumpScale: 3, roughness: 0.72, transparent: short, alphaTest: short ? 0.02 : 0.5,
@@ -633,7 +633,7 @@ export class PlayerView {
     mat.onBeforeCompile = (sh) => {
       sh.uniforms.hA = { value: new THREE.Vector3(...ha) };
       sh.vertexShader = 'attribute float hl;\nvarying float vHl;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n  vHl = hl;');
-      sh.fragmentShader = 'uniform vec3 hA;\nvarying float vHl;\n' + sh.fragmentShader.replace('#include <alphatest_fragment>', '  diffuseColor.a *= smoothstep(hA.x, hA.y, vHl) * hA.z;\n#include <alphatest_fragment>');
+      sh.fragmentShader = 'uniform vec3 hA;\nvarying float vHl;\n' + sh.fragmentShader.replace('#include <alphatest_fragment>', '  float hn = fract(sin(dot(floor(vMapUv * 700.0), vec2(12.9898, 78.233))) * 43758.5453);\n  diffuseColor.a *= smoothstep(hA.x, hA.y, vHl + (hn - 0.5) * 0.06) * hA.z;\n#include <alphatest_fragment>');
     };
     const P = (i) => new THREE.Vector3(p16[i * 3] / 16000, p16[i * 3 + 1] / 16000, p16[i * 3 + 2] / 16000);
     const N = (i) => new THREE.Vector3(n8[i * 3] / 127, n8[i * 3 + 1] / 127, n8[i * 3 + 2] / 127).normalize();
@@ -661,17 +661,32 @@ export class PlayerView {
     };
     const s = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
     if (style === 'afro') {
-      shell((i, p) => { const g = s(-0.05, 0.55, line[i]); return { n: 0.008 + g * (0.05 + Math.max(0, p.y - top + 0.1) * 0.22) * (1 + (rnd() - 0.5) * 0.06) }; });
-    } else if (style === 'hightop') {
-      shell((i, p) => {
-        const hi = s(0.25, 0.7, line[i]);
-        return { n: 0.006 + 0.03 * hi, up: hi * Math.max(0, 0.085 - (top - p.y) * 0.4) };
+      // runde Form: jede Stelle wird entlang der Normalen bis auf ein Ellipsoid um die Kopfmitte geschoben
+      let zc = 0; for (let i = 0; i < n; i++) zc += P(i).z / n;
+      const C = new THREE.Vector3(0, top - 0.085, zc + 0.005), R = new THREE.Vector3(0.148, 0.15, 0.158);
+      shell((i, p, nn) => {
+        const d = p.clone().sub(C), q = Math.hypot(d.x / R.x, d.y / R.y, d.z / R.z);
+        const g = s(-0.02, 0.9, line[i]);
+        const reach = Math.max(0, (1 - q) * d.length() / Math.max(q, 0.3));      // Abstand bis zur Hülle (radial)
+        const taper = 0.1 + 0.9 * s(C.y - 0.17, C.y + 0.03, p.y);                // unten zum Nacken hin anliegend
+        return { n: 0.0015 + g * reach * taper * (1 + (rnd() - 0.5) * 0.05) };
       });
+    } else if (style === 'hightop') {
+      shell(() => ({ n: 0.0025 }));
+      // Block: gedrehtes Profil mit abgerundeter Oberkante, steckt unten im Schädel
+      let zc = 0; for (let i = 0; i < n; i++) zc += P(i).z / n;
+      const h0 = 0.14, prof = [[0, -h0 / 2], [0.072, -h0 / 2], [0.074, 0.03], [0.071, 0.05], [0.063, 0.063], [0.037, 0.069], [0, 0.07]];
+      const g = new THREE.LatheGeometry(prof.map(([x, y]) => new THREE.Vector2(x, y)), 40);
+      g.scale(1, 1, 1.12);
+      g.translate(0, top + 0.055 - 0.07, zc + 0.012);
+      g.translate(-headRest.x, -headRest.y, -headRest.z);
+      const bm = new THREE.MeshPhysicalMaterial({ map: tex.map, bumpMap: tex.bump, bumpScale: 3, roughness: 0.72, sheen: 1, sheenRoughness: 0.55, sheenColor: mat.sheenColor });
+      const m = new THREE.Mesh(g, bm); m.castShadow = true; this.head.add(m);
     } else if (['dreads', 'twists', 'cornrows', 'bun', 'buzz', 'waves', 'fade'].includes(style)) {
-      shell(() => ({ n: style === 'cornrows' ? 0.005 : style === 'bun' ? 0.008 : 0.0035 }));
+      shell(() => ({ n: style === 'cornrows' ? 0.003 : style === 'bun' ? 0.004 : 0.0025 }));
       const extra = [];
       if (style === 'dreads' || style === 'twists') {
-        for (let i = 0; i < n; i += style === 'dreads' ? 11 : 7) {
+        for (let i = 0; i < n; i += style === 'dreads' ? 11 : 5) {
           if (line[i] < 0.08) continue;
           const p = P(i), nn = N(i);
           if (style === 'dreads' && nn.z > 0.55) continue;
@@ -682,9 +697,11 @@ export class PlayerView {
             const pts = [a, a.clone().addScaledVector(out, 0.03).add(new THREE.Vector3(0, -0.03, 0)), a.clone().addScaledVector(out, 0.05).add(new THREE.Vector3(0, -len * 0.6, 0)), a.clone().addScaledVector(out, 0.055).add(new THREE.Vector3((rnd() - 0.5) * 0.03, -len, (rnd() - 0.5) * 0.02))];
             extra.push(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts.map((q) => q.sub(headRest))), 10, 0.0095, 6, false));
           } else {
-            const g = new THREE.CapsuleGeometry(0.011, 0.016, 3, 6);
-            const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), nn);
-            extra.push(g.applyMatrix4(new THREE.Matrix4().compose(p.addScaledVector(nn, 0.012).sub(headRest), q, new THREE.Vector3(1, 1, 1))));
+            // Twist liegt am Kopf an und fällt nach hinten-unten (Richtung = Tangente)
+            const g = new THREE.CapsuleGeometry(0.0075, 0.03, 3, 6);
+            const tdir = new THREE.Vector3(0, -1, -0.35).addScaledVector(nn, -new THREE.Vector3(0, -1, -0.35).dot(nn)).normalize();
+            const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), tdir);
+            extra.push(g.applyMatrix4(new THREE.Matrix4().compose(p.addScaledVector(nn, 0.008).addScaledVector(tdir, 0.012).sub(headRest), q, new THREE.Vector3(1, 1, 1))));
           }
         }
       }
