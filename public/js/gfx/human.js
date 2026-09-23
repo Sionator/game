@@ -311,8 +311,12 @@ function composeSkin(A, o) {
     }
     // Lippen
     if (lips > 0) {
-      rough -= lips * 0.22;
+      rough -= lips * 0.32;                                          // feuchter Glanz
       const t = lips * 0.92; r += (lip.r * (0.7 + 0.3 * ao) - r) * t; gg += (lip.g * (0.7 + 0.3 * ao) - gg) * t; b += (lip.b * (0.7 + 0.3 * ao) - b) * t;
+      // Unterlippe etwas heller in der Mitte (Volumen), Mundwinkel dunkler
+      const ax3 = Math.abs(x);
+      if (y < 6.66) { const k = 0.08 * Math.exp(-((ax3 / 0.12) ** 2)) * lips; r *= 1 + k; gg *= 1 + k; b *= 1 + k; }
+      const corner = 0.18 * lips * Math.exp(-(((ax3 - 0.26) / 0.05) ** 2)); r *= 1 - corner; gg *= 1 - corner; b *= 1 - corner;
     }
     // Bartschatten
     if (stub > 0 && o.stubble > 0) {
