@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { canvasTex, makeCanvas, mulberry, speckle, glowTex } from './textures.js';
 import { FLOOR } from './court.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { PlayerView } from './human.js';
 
 export const FLOODLIGHTS = [
   { pole: [-10.4, -3.6], target: [1.5, 0, 6] },
@@ -438,105 +439,43 @@ function buildSkyline(scene, rnd, updaters) {
 }
 
 // ------------------------------------------------------------------ Zuschauer
+// Dieselben realistischen Menschmodelle wie die Spieler, mit gemalter Freizeitkleidung
 function buildCrowd(scene, Q, rnd) {
   const people = [];
-  const SK = ['#f2cfae', '#e3b08a', '#c98d62', '#a36a42', '#7c4b2c', '#533322'];
-  const SHIRTS = [0xe8413c, 0x2f7cf6, 0x22c55e, 0xf59e0b, 0xf4f4f4, 0x16181d, 0xa855f7, 0x64748b, 0xec4899];
-  const spots = [];
   for (let i = 0; i < Q.crowd; i++) {
     const side = i % 2 ? 1 : -1;
     const z = 0.6 + ((i >> 1) / Math.max(1, Q.crowd / 2)) * 12.5 + rnd() * 0.6;
-    const onBench = side === -1 && (Math.abs(z - 3.2) < 1 || Math.abs(z - 9.5) < 1);
-    spots.push({ x: side * (onBench ? 9.62 : 8.9 + rnd() * 0.9), z, sit: onBench });
+    // Bänke: links bei z=3.2 und 9.5, rechts bei 6.5 (Sitzfläche 2,2 m breit)
+    const bench = [[-1, 3.2], [-1, 9.5], [1, 6.5]].find(([bs, bz]) => bs === side && Math.abs(z - bz) < 1.15);
+    const onBench = !!bench;
+    const x = onBench ? side * 9.74 : side * (8.9 + rnd() * 0.9);
+    const zz = onBench ? Math.max(bench[1] - 0.8, Math.min(bench[1] + 0.8, z)) : z;
+    const v = new PlayerView(scene, { id: 'fan' + i, name: 'Fan ' + i + ' ' + Math.floor(rnd() * 1e6), color: '#888888' }, { crowd: true });
+    v.root.position.set(x, 0, zz);
+    v.root.rotation.y = onBench ? -side * Math.PI / 2 : Math.atan2(-x, 6 - z);
+    v.phase = rnd() * 6;
+    v.crowdArms = rnd() < 0.3 ? 'clap' : rnd() < 0.3 ? 'pockets' : '';
+    people.push({ v, sit: onBench, cheerT: 0, delay: 0, h: 1.62 + rnd() * 0.26, scaled: false });
   }
-  // Ein gemeinsames Material mit Vertex-Farben für alle Zuschauer
-  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8 });
-  const colored = (geo, hex, m) => {
-    if (m) geo.applyMatrix4(m);
-    const c = new THREE.Color(hex);
-    const n = geo.attributes.position.count;
-    const arr = new Float32Array(n * 3);
-    for (let i = 0; i < n; i++) { arr[i * 3] = c.r; arr[i * 3 + 1] = c.g; arr[i * 3 + 2] = c.b; }
-    geo.setAttribute('color', new THREE.BufferAttribute(arr, 3));
-    return geo.index ? geo.toNonIndexed() : geo;
-  };
-  const M = (x, y, z, rx = 0, sx = 1, sy = 1, sz = 1) => new THREE.Matrix4().compose(
-    new THREE.Vector3(x, y, z), new THREE.Quaternion().setFromEuler(new THREE.Euler(rx, 0, 0)), new THREE.Vector3(sx, sy, sz));
-  for (const sp of spots) {
-    const g = new THREE.Group();
-    const skinC = SK[Math.floor(rnd() * SK.length)];
-    const shirtC = SHIRTS[Math.floor(rnd() * SHIRTS.length)];
-    const pantsC = rnd() < 0.5 ? 0x1d2433 : 0x3b3f47;
-    const s = 0.9 + rnd() * 0.15;
-    g.scale.setScalar(s);
-    const hipY = sp.sit ? 0.48 : 0.9;
-    const body = [];
-    for (const lx of [-0.09, 0.09]) {
-      if (sp.sit) {
-        body.push(colored(new THREE.CapsuleGeometry(0.07, 0.3, 4, 8), pantsC, M(lx, hipY, 0.2, Math.PI / 2)));
-        body.push(colored(new THREE.CapsuleGeometry(0.06, 0.34, 4, 8), pantsC, M(lx, 0.22, 0.38)));
-      } else {
-        body.push(colored(new THREE.CapsuleGeometry(0.07, 0.7, 4, 8), pantsC, M(lx, 0.45, 0)));
-      }
-      body.push(colored(new THREE.BoxGeometry(0.1, 0.06, 0.2), 0xeeeeee, M(lx, 0.03, sp.sit ? 0.44 : 0.04)));
-    }
-    body.push(colored(new THREE.CapsuleGeometry(0.17, 0.4, 4, 10), shirtC, M(0, hipY + 0.32, 0, 0, 1, 1, 0.7)));
-    body.push(colored(new THREE.CylinderGeometry(0.05, 0.055, 0.1, 8), skinC, M(0, hipY + 0.6, 0)));
-    const bodyMesh = new THREE.Mesh(mergeGeometries(body), mat);
-    bodyMesh.castShadow = true;
-    g.add(bodyMesh);
-    const headParts = [colored(new THREE.SphereGeometry(0.11, 14, 10), skinC)];
-    if (rnd() < 0.4) {
-      const capC = SHIRTS[Math.floor(rnd() * SHIRTS.length)];
-      headParts.push(colored(new THREE.SphereGeometry(0.115, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), capC, M(0, 0.03, 0)));
-      headParts.push(colored(new THREE.BoxGeometry(0.16, 0.015, 0.12), capC, M(0, 0.04, 0.1)));
-    } else if (rnd() < 0.5) {
-      headParts.push(colored(new THREE.SphereGeometry(0.114, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.45), 0x16100c, M(0, 0.012, -0.004)));
-    }
-    const head = new THREE.Mesh(mergeGeometries(headParts), mat);
-    head.position.y = hipY + 0.72;
-    head.castShadow = true;
-    g.add(head);
-    const arms = [];
-    for (const ax of [-0.22, 0.22]) {
-      const sh = new THREE.Group();
-      sh.position.set(ax, hipY + 0.5, 0);
-      const arm = new THREE.Mesh(mergeGeometries([
-        colored(new THREE.CapsuleGeometry(0.055, 0.2, 4, 8), shirtC, M(0, -0.12, 0)),
-        colored(new THREE.CapsuleGeometry(0.045, 0.3, 4, 8), skinC, M(0, -0.35, 0)),
-      ]), mat);
-      sh.add(arm);
-      g.add(sh);
-      arms.push(sh);
-    }
-    g.position.set(sp.x, 0, sp.z);
-    g.rotation.y = Math.atan2(-sp.x, 6 - sp.z);
-    scene.add(g);
-    people.push({ g, head, arms, sit: sp.sit, cheerT: 0, delay: 0, phase: rnd() * 6, base: g.rotation.y });
-  }
-  const v = new THREE.Vector3();
   return {
     cheer(level = 1) {
       for (const p of people) { p.delay = Math.random() * 0.35; p.cheerT = 1.2 + level * 0.8 + Math.random() * 0.4; }
     },
     update(dt, time, ballPos) {
       for (const p of people) {
-        if (p.delay > 0) { p.delay -= dt; continue; }
-        p.cheerT = Math.max(0, p.cheerT - dt);
-        const c = p.cheerT > 0 ? 1 : 0;
-        const jump = c && !p.sit ? Math.abs(Math.sin(time * 9 + p.phase)) * 0.18 : 0;
-        p.g.position.y = jump;
-        const armUp = c ? 2.7 + Math.sin(time * 12 + p.phase) * 0.3 : 0.1 + Math.sin(time * 1.5 + p.phase) * 0.05;
-        p.arms[0].rotation.z = c ? -0.5 : -0.12; p.arms[1].rotation.z = c ? 0.5 : 0.12;
-        p.arms[0].rotation.x += (armUp - p.arms[0].rotation.x) * Math.min(1, dt * 10);
-        p.arms[1].rotation.x += (armUp - p.arms[1].rotation.x) * Math.min(1, dt * 10);
-        if (ballPos) {
-          v.copy(ballPos);
-          p.g.worldToLocal(v);
-          const yaw = Math.max(-1, Math.min(1, Math.atan2(v.x, v.z)));
-          p.head.rotation.y += (yaw - p.head.rotation.y) * Math.min(1, dt * 4);
+        const v = p.v;
+        if (!v.ready) continue;
+        if (!p.scaled) {
+          // normale Körpergrößen statt Basketball-Profis; Sitzhöhe passend zur Bank (Sitzfläche 0,48 m)
+          const s = p.h / v.variant.height;
+          v.root.scale.setScalar(s);
+          v.sitDrop = (v.hipY - 0.6 / s) / v.scaleK;
+          v.root.traverse((o) => { if (o.isMesh) o.castShadow = false; });                    // Zuschauer werfen keine Schatten (Leistung)
+          p.scaled = true;
         }
-        p.g.rotation.z = Math.sin(time * 1.2 + p.phase) * 0.02;
+        if (p.delay > 0) p.delay -= dt;
+        else p.cheerT = Math.max(0, p.cheerT - dt);
+        v.crowdUpdate(dt, time, { cheer: p.delay <= 0 ? p.cheerT : 0, sit: p.sit, look: ballPos });
       }
     },
   };

@@ -276,7 +276,7 @@ function jerseyFieldP(p) {
   return Math.min(dArm, dNeck, dBack, p[1] - yHem);
 }
 const jerseyField = (v) => jerseyFieldP(BP(v));
-const yShortsTop = ySpine3 + 0.15, yShortsHem = yKnee + 0.5;
+const yShortsTop = yHip + 1.1, yShortsHem = yKnee + 0.1;      // Bund auf der Hüfte, Saum knapp übers Knie
 const shortsFieldP = (p) => Math.min(yShortsTop - p[1], p[1] - yShortsHem);
 const shortsField = (v) => shortsFieldP(BP(v));
 const jerseyFaces = tightsFaces.filter((f) => {
@@ -473,8 +473,8 @@ for (const cfg of VARIANTS) {
   for (const [name, blk] of Object.entries(blocks)) {
     let data;
     // Versatz in dm entlang der Hüllen-Normalen: Trikot unten lockerer, Shorts zum Knie hin weiter
-    if (name === 'jersey') data = inflate(blk, (v) => 0.13 + 0.24 * smooth01(ySpine3 + 0.5, yHem, by(v)));
-    else if (name === 'shorts') data = inflate(blk, (v) => 0.28 + 0.34 * smooth01(yHip, yShortsHem, by(v)));
+    if (name === 'jersey') data = inflate(blk, (v) => 0.18 + 0.34 * smooth01(ySpine3 + 1.6, ySpine3 - 0.2, by(v)) + 0.1 * smooth01(ySpine3 - 0.2, yHem, by(v)));   // Brust anliegend, ab Taille locker und gerade fallend
+    else if (name === 'shorts') data = inflate(blk, (v) => 0.3 + 0.5 * smooth01(yHip - 0.3, yShortsHem, by(v)));   // weite, lange Hosenbeine
     else {
       const pos = new Float32Array(blk.orig.length * 3), nrm = new Float32Array(blk.orig.length * 3);
       const N = name === 'lashes' ? Nl : Nb;
@@ -579,7 +579,7 @@ log('AO berechnet');
 
 // ------------------------------------------------------------------ Masken in UV backen
 const TEX = 1024;
-function rasterize(blk, shade, channels = 4) {
+function rasterize(blk, shade, channels = 4, vattr = null) {
   const img = new Float32Array(TEX * TEX * channels);
   const cov = new Uint8Array(TEX * TEX);
   const idx = blk.index;
@@ -600,7 +600,7 @@ function rasterize(blk, shade, channels = 4) {
         if (w0 < -0.02 || w1 < -0.02 || w2 < -0.02) continue;
         const pos = [0, 1, 2].map((k) => B[O[0] * 3 + k] * w0 + B[O[1] * 3 + k] * w1 + B[O[2] * 3 + k] * w2);
         const ao = AO[O[0]] * w0 + AO[O[1]] * w1 + AO[O[2]] * w2;
-        const val = shade(pos, ao);
+        const val = shade(pos, ao, vattr ? vattr[O[0]] * w0 + vattr[O[1]] * w1 + vattr[O[2]] * w2 : 0);
         const o = (y * TEX + x) * channels;
         for (let k = 0; k < channels; k++) img[o + k] = val[k];
         cov[y * TEX + x] = 1;
@@ -655,7 +655,9 @@ function faceMasks([x, y, z], ao) {
 }
 const headLike = (x, y, z) => y > 6.6 && Math.hypot(x, (y - HC[1]) * 0.8, z - HC[2]) < 1.35;
 
-const maskImg = rasterize(body, (p, ao) => faceMasks(p, ao), 5);
+// Arm-Gewicht je Vertex (für gemalte Ärmel bei Zuschauer-Kleidung)
+const armW = Float32Array.from({ length: NV }, (_, v) => Math.min(1, boneWeight(v, ARM_BONES)));
+const maskImg = rasterize(body, (p, ao, arm) => [...faceMasks(p, ao), arm], 6, armW);
 // PNG 1: R=AO, G=Lippen, B=Brauen, A=Kopfhaut
 // PNG 2: R/G/B = Position (für Socken, Tattoos, Sleeves zur Laufzeit), A = Bartschatten
 const bb = { min: [-5.2, -8.3, -1.3], max: [5.2, 8.6, 3.4] };
@@ -664,8 +666,8 @@ const posImg = rasterize(body, (p) => p.map((v, k) => (v - bb.min[k]) / (bb.max[
 const pngA = new Uint8Array(TEX * TEX * 4), pngB = new Uint8Array(TEX * TEX * 4), pngP = new Uint8Array(TEX * TEX * 4);
 const c255 = (v) => Math.round(Math.max(0, Math.min(1, v)) * 255);
 for (let i = 0; i < TEX * TEX; i++) {
-  pngA[i * 4] = c255(maskImg[i * 5]); pngA[i * 4 + 1] = c255(maskImg[i * 5 + 1]); pngA[i * 4 + 2] = c255(maskImg[i * 5 + 2]);
-  pngB[i * 4] = c255(maskImg[i * 5 + 3]); pngB[i * 4 + 1] = c255(maskImg[i * 5 + 4]);
+  pngA[i * 4] = c255(maskImg[i * 6]); pngA[i * 4 + 1] = c255(maskImg[i * 6 + 1]); pngA[i * 4 + 2] = c255(maskImg[i * 6 + 2]);
+  pngB[i * 4] = c255(maskImg[i * 6 + 3]); pngB[i * 4 + 1] = c255(maskImg[i * 6 + 4]); pngB[i * 4 + 2] = c255(maskImg[i * 6 + 5]);
   for (let k = 0; k < 3; k++) pngP[i * 4 + k] = c255(posImg[i * 3 + k]);
   pngA[i * 4 + 3] = pngB[i * 4 + 3] = pngP[i * 4 + 3] = 255;
 }

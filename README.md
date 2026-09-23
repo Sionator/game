@@ -23,7 +23,7 @@ Nachts auf einem Streetball-Court mitten in der Stadt: Crossover, Dunks, Blocks 
 - **Handy-Steuerung** mit Joystick und Buttons
 - Echte Ball-Physik (Ring, Brett, Netz), synthetisierte Sounds – keine externen Dateien
 - **Grafik:** Nacht-Court mit Flutlicht, mehreren Schatten, Lichtkegeln, Bloom, spiegelnden Pfützen,
-  Graffiti-Wand, Skyline mit Neonschildern und jubelnden Zuschauern; ein Netz, das sich um den Ball verformt
+  Graffiti-Wand, Skyline mit Neonschildern und realistischen Zuschauern in Freizeitkleidung (sitzen, klatschen, jubeln); ein Netz, das sich um den Ball verformt
 - **Realistische Spieler:** echte Menschmodelle (abgeleitet aus MakeHuman, CC0) mit 54-Knochen-Skelett,
   7 Körpertypen (Spieler und Spielerinnen, verschiedene Größen und Herkünfte), gebackener Umgebungsverdeckung,
   Poren, warmer Haut, Augen mit Hornhaut-Glanz, Wimpern und Augenbrauen; Frisuren (Afro, Dreads, Cornrows,
