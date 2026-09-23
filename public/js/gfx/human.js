@@ -442,7 +442,11 @@ export class PlayerView {
     const females = H.variants.map((v, i) => [v, i]).filter(([v]) => v.gender === 0);
     const isKing = info.body === 'k' && king.length > 0;
     const pool = isKing ? king : info.body === 'f' ? females : info.body === 'm' ? males : (rnd() < (this.crowd ? 0.4 : 0.2) ? females : males);
-    const [variant, vi] = pool[seed % pool.length];
+    // Eigener Spieler aus dem Editor überschreibt alle Zufallswerte
+    const look = info.body === 'c' && info.look ? info.look : null;
+    this.look = look;
+    const lookV = look && H.variants.findIndex((v) => v.id === look.body);
+    const [variant, vi] = look && lookV >= 0 ? [H.variants[lookV], lookV] : pool[seed % pool.length];
     this.variant = variant;
     const female = variant.gender === 0;
     const light = isLight(info.color);
@@ -529,6 +533,10 @@ export class PlayerView {
     let beard = female ? 'none' : pick(['none', 'none', 'stubble', 'stubble', 'beard', 'goatee']);
     // Power-Forward „King“: fester Look (Vollbart, kurze Haare, Stirnband, Arm-Sleeve, Kette)
     if (isKing) { skinHex = '#5e3b28'; hairHex = '#1a1310'; style = 'buzz'; beard = 'beard'; }
+    if (look) {
+      skinHex = look.skin; hairHex = look.hairCol; style = look.hair; beard = female ? 'none' : look.beard;
+      if (style === 'cap') this.capColor = isLight(info.color) ? '#16181d' : info.color;
+    }
     this.isKing = isKing;
     const painted = ['buzz', 'fade', 'waves'].includes(style) ? style : style === 'cap' ? 'buzz' : ['dreads', 'twists', 'afro', 'cornrows', 'bun'].includes(style) ? 'buzz' : style === 'hightop' ? 'fade' : null;
     const sockHex = rnd() < 0.55 ? '#f2f2f2' : '#15171c';
@@ -537,8 +545,10 @@ export class PlayerView {
       stubble: beard === 'stubble' ? 0.32 : beard === 'beard' || beard === 'goatee' ? 0.25 : 0,
       sock: sockHex, sockStripe: rnd() < 0.5 ? info.color : (sockHex === '#f2f2f2' ? '#15171c' : '#f2f2f2'),
       sockTop: -6.3 - rnd() * 0.6,
-      tights: !isKing && rnd() < 0.15, kneeSleeve: !isKing && rnd() < 0.3 ? pick(['L', 'R']) : null, armSleeve: isKing || rnd() < 0.3,
-      tattoo: crowd ? null : isKing ? 'band' : rnd() < 0.35 ? pick(['band', 'sleeve']) : null,
+      tights: !look && !isKing && rnd() < 0.15,
+      kneeSleeve: look ? (look.kneeSleeve ? 'L' : null) : !isKing && rnd() < 0.3 ? pick(['L', 'R']) : null,
+      armSleeve: look ? look.armSleeve : isKing || rnd() < 0.3,
+      tattoo: look ? (look.tattoo === 'none' ? null : look.tattoo) : crowd ? null : isKing ? 'band' : rnd() < 0.35 ? pick(['band', 'sleeve']) : null,
       step: crowd ? 2 : 1,
       outfit: crowd ? (() => {
         const top = pick(['#e8413c', '#2f7cf6', '#22c55e', '#f59e0b', '#f4f4f4', '#16181d', '#a855f7', '#64748b', '#ec4899', '#7c2d12', '#0f766e']);
@@ -558,7 +568,7 @@ export class PlayerView {
       // warmes Streulicht (Fake-Subsurface): hebt Schatten rötlich an statt grau
       emissive: new THREE.Color(0xff8a6a), emissiveMap: skinTex, emissiveIntensity: 0.08,
     });
-    const number = isKing ? '1' : String((seed % 98) + 1);
+    const number = look ? String(look.num) : isKing ? '1' : String((seed % 98) + 1);
     const jerseyMat = crowd ? null : new THREE.MeshPhysicalMaterial({
       map: jerseyTexture(info.color, number, info.name, WORDMARKS[hash(info.color) % WORDMARKS.length]),
       roughness: 0.7, sheen: 0.6, sheenRoughness: 0.5, sheenColor: new THREE.Color(info.color).lerp(new THREE.Color(0xffffff), 0.3), side: THREE.DoubleSide,
@@ -619,7 +629,8 @@ export class PlayerView {
     });
     // --- Schuhe am Fuß
     const shoe = shoeGeometry();
-    const shoeC = pick(['#f5f5f5', '#f5f5f5', '#111317', info.color, '#e11d48', '#f5f5f5']);
+    let shoeC = pick(['#f5f5f5', '#f5f5f5', '#111317', info.color, '#e11d48', '#f5f5f5']);
+    if (look) shoeC = look.shoe === 'team' ? info.color : look.shoe;
     const accentC = shoeC.toLowerCase() === info.color.toLowerCase() ? (light ? '#15171c' : '#f5f5f5') : info.color;
     const shoeMats = {
       upper: new THREE.MeshPhysicalMaterial({ color: shoeC, roughness: 0.42, clearcoat: 0.4, clearcoatRoughness: 0.4 }),
@@ -644,15 +655,15 @@ export class PlayerView {
 
     // --- Accessoires
     const bandMat = new THREE.MeshStandardMaterial({ color: light ? 0x15171c : col(info.color), roughness: 0.75 });
-    if (!crowd && rnd() < 0.45) for (const arm of [this.armL, this.armR]) {
-      if (rnd() < 0.4) continue;
+    if (!crowd && (look ? look.wristbands : rnd() < 0.45)) for (const arm of [this.armL, this.armR]) {
+      if (!look && rnd() < 0.4) continue;
       const w = new THREE.Mesh(new THREE.CylinderGeometry(0.036, 0.034, 0.06, 20), bandMat);
       const d = arm.hand.position.clone();                          // Unterarm-Richtung (lokal)
       w.position.copy(d.clone().multiplyScalar(0.88));
       w.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), d.clone().normalize());
       arm.elbow.add(w);
     }
-    if (!female && (isKing || rnd() < 0.25)) {
+    if (look ? look.chain : !female && (isKing || rnd() < 0.25)) {
       // Halsumfang an der Basis messen → Kette liegt auf, statt durch den Hals zu gehen
       const nb = this.B.neck[0], nj = J('neck01');
       const bpos = A.arr(H.variants[vi].blocks.body.pos);
@@ -668,7 +679,7 @@ export class PlayerView {
       chain.rotation.x = Math.PI / 2 + 0.35;                     // vorne tiefer (hängt auf dem Brustbein)
       nb.add(chain);
     }
-    if (!crowd && (isKing || rnd() < 0.35) && !['afro', 'hightop'].includes(style)) this.headband = bandMat;
+    if (!crowd && (look ? look.headband : isKing || rnd() < 0.35) && !['afro', 'hightop', 'cap'].includes(style)) this.headband = bandMat;
     this.buildHair(A, vi, style, beard, hairHex, rnd, headRest);
 
     this.ready = true;
@@ -748,16 +759,27 @@ export class PlayerView {
       shell(() => ({ n: style === 'cornrows' ? 0.003 : style === 'bun' ? 0.004 : 0.0025 }));
       const extra = [];
       if (style === 'dreads' || style === 'twists') {
-        for (let i = 0; i < n; i += style === 'dreads' ? 11 : 5) {
+        let dz = 0; for (let i = 0; i < n; i++) dz += P(i).z / n;
+        const dC = new THREE.Vector3(0, top - 0.1, dz);
+        for (let i = 0; i < n; i += style === 'dreads' ? 6 : 5) {
           if (line[i] < 0.08) continue;
           const p = P(i), nn = N(i);
-          if (style === 'dreads' && nn.z > 0.55) continue;
           if (style === 'dreads') {
-            const len = 0.16 + rnd() * 0.12;
-            const out = new THREE.Vector3(nn.x, 0, nn.z).normalize();
-            const a = p.clone().addScaledVector(nn, 0.004);
-            const pts = [a, a.clone().addScaledVector(out, 0.03).add(new THREE.Vector3(0, -0.03, 0)), a.clone().addScaledVector(out, 0.05).add(new THREE.Vector3(0, -len * 0.6, 0)), a.clone().addScaledVector(out, 0.055).add(new THREE.Vector3((rnd() - 0.5) * 0.03, -len, (rnd() - 0.5) * 0.02))];
-            extra.push(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts.map((q) => q.sub(headRest))), 10, 0.0095, 6, false));
+            // Strähne fällt unter Schwerkraft, legt sich um den Schädel und bleibt aus dem Gesicht
+            const len = 0.2 + rnd() * 0.14, seg = 0.016;
+            let q = p.clone().addScaledVector(nn, 0.005);
+            const minR = q.distanceTo(dC) + 0.004;
+            const pts = [q.clone()];
+            const v = nn.clone().multiplyScalar(0.4).add(new THREE.Vector3(q.x * 3, 0, -0.9)).normalize();
+            for (let d = 0; d < len; d += seg) {
+              v.y -= 0.32; v.x += (rnd() - 0.5) * 0.08; v.normalize();
+              q = q.clone().addScaledVector(v, seg);
+              const r = q.distanceTo(dC);
+              if (r < minR && q.y > dC.y - 0.14) q.sub(dC).multiplyScalar(minR / r).add(dC);
+              if (q.y < top - 0.07 && q.z > dC.z + 0.015 && Math.abs(q.x) < 0.085) q.z = dC.z + 0.015;
+              pts.push(q);
+            }
+            extra.push(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts.map((x) => x.sub(headRest))), pts.length * 2, 0.0072, 5, false));
           } else {
             // Twist liegt am Kopf an und fällt nach hinten-unten (Richtung = Tangente)
             const g = new THREE.CapsuleGeometry(0.0075, 0.03, 3, 6);
@@ -1164,6 +1186,22 @@ export class PlayerView {
     this.disposed = true;
     this.scene.remove(this.root);
     this.scene.remove(this.ground);
+    // GPU-Speicher freigeben (gemeinsam genutzte Geometrien/Texturen bleiben)
+    const keepGeo = new Set(assets ? assets.geoCache.values() : []);
+    const keepTex = new Set([_pores, _lash, assets && assets.eyeTex]);
+    const seen = new Set();
+    for (const root of [this.root, this.ground]) root.traverse((o) => {
+      if (o.geometry && !keepGeo.has(o.geometry) && !seen.has(o.geometry)) { seen.add(o.geometry); o.geometry.dispose(); }
+      for (const m of [].concat(o.material || [])) {
+        if (seen.has(m)) continue;
+        seen.add(m);
+        for (const k of ['map', 'bumpMap', 'normalMap', 'roughnessMap', 'emissiveMap', 'alphaMap']) {
+          const t = m[k];
+          if (t && !keepTex.has(t) && !seen.has(t) && !t.userData.shared) { seen.add(t); t.dispose(); }
+        }
+        m.dispose();
+      }
+    });
   }
 }
 

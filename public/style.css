@@ -148,3 +148,28 @@ body.touch #feed { bottom: 190px; }
 #movePop.show { opacity: 1; transition: none; }
 #scoreboard .nm { font-size: .88rem; }
 #statsTable .mine { color: var(--accent2); }
+
+/* Spieler-Editor */
+.editbtn { margin-top: 4px; }
+#editor { background: linear-gradient(90deg, rgba(11,15,26,.92) 0, rgba(11,15,26,.75) 400px, rgba(11,15,26,0) 560px); justify-content: flex-start; align-items: stretch; padding: 0; pointer-events: none; }
+#editor .edpanel { pointer-events: auto; width: min(400px, 100%); display: flex; flex-direction: column; gap: 10px; padding: 18px 18px 14px; max-height: 100%; }
+#editor h2 { margin: 0; font-size: 1.3rem; }
+.edscroll { overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding-right: 6px; flex: 1; min-height: 0; }
+.edgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 6px; }
+.edgrid button { font-size: .82rem; padding: 7px 6px; line-height: 1.15; }
+.edgrid button small { display: block; color: var(--muted); font-size: .7rem; }
+.edgrid button.on { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 700; }
+.edgrid button.on small { color: #ffe3cc; }
+.seg.wrap { flex-wrap: wrap; }
+.colors button.team { background: conic-gradient(#e8413c, #2f7cf6, #22c55e, #f59e0b, #e8413c) !important; }
+.edactions { display: flex; gap: 6px; }
+.edactions button { flex: 1; }
+.edview { pointer-events: auto; flex: 1; position: relative; cursor: grab; touch-action: none; }
+.edview #edCam { position: absolute; right: 16px; top: 16px; width: 220px; }
+.edhint { position: absolute; bottom: 12px; width: 100%; text-align: center; color: var(--muted); font-size: .8rem; margin: 0; }
+@media (max-width: 720px) {
+  #editor { flex-direction: column-reverse; background: linear-gradient(0deg, rgba(11,15,26,.95) 0, rgba(11,15,26,.8) 55%, rgba(11,15,26,0) 70%); }
+  #editor .edpanel { width: 100%; max-height: 58%; }
+  .edview { min-height: 40%; }
+  .edview #edCam { top: 10px; right: 10px; width: 180px; }
+}

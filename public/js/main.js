@@ -4,6 +4,7 @@ import { initAudio, sfx, toggleMute } from './audio.js';
 import { setQuality } from './gfx/quality.js';
 import { HOOP, METER, PLAYER, lerp, clamp, hoopDist, burstDir } from '/shared/constants.js';
 import { stepMove } from '/shared/sim.js';
+import { createEditor, loadLook } from './editor.js';
 
 const $ = (s) => document.querySelector(s);
 const COLORS = ['#e8413c', '#2f7cf6', '#22c55e', '#f59e0b', '#a855f7', '#ec4899', '#14b8a6', '#f8fafc'];
@@ -68,7 +69,7 @@ function send(m) {
   else if (m.t === 'create' || m.t === 'join' || m.t === 'bot') S.pending = m;
 }
 
-function hello() { send({ t: 'hello', name: S.name || 'Spieler', color: S.color, body: S.body }); }
+function hello() { send({ t: 'hello', name: S.name || 'Spieler', color: S.color, body: S.body, look: S.body === 'c' ? loadLook(store) : undefined }); }
 
 setInterval(() => send({ t: 'ping', ts: performance.now() }), 2000);
 
@@ -134,6 +135,16 @@ function buildMenu() {
       for (const x of document.querySelectorAll('#bodySeg button')) x.classList.toggle('on', x === b);
     };
   }
+  const editor = createEditor({
+    world, S, store, showScreen,
+    onSave: () => {
+      S.body = 'c'; store.set('sb_body', 'c');
+      for (const x of document.querySelectorAll('#bodySeg button')) x.classList.toggle('on', x.dataset.v === 'c');
+      toast('Spieler gespeichert ✅');
+    },
+  });
+  S.editor = editor;
+  $('#btnEditor').onclick = () => { S.name = $('#name').value.trim().slice(0, 16) || S.name; editor.open(); };
   setMode(S.mode === '2v2' ? '2v2' : '1v1');
   for (const b of document.querySelectorAll('#targetSeg button')) {
     b.onclick = () => {
@@ -790,6 +801,7 @@ function frame(now) {
     camLook.set(0, 2, 3);
     camera.position.copy(camPos);
     camera.lookAt(camLook);
+    if (S.editor) S.editor.tick(dt);
     if (S.camOverride) S.camOverride(camera);
     ball.position.set(Math.sin(time * 0.7) * 2, BALL_BOUNCE(time), 5 + Math.cos(time * 0.7) * 2);
   }

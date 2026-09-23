@@ -74,6 +74,7 @@ export function blobTex() {
     gr.addColorStop(1, 'rgba(0,0,0,0)');
     g.fillStyle = gr; g.fillRect(0, 0, w, w);
   });
+  _blob.userData.shared = true;
   return _blob;
 }
 

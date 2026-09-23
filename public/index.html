@@ -14,6 +14,33 @@
 <body>
   <canvas id="c"></canvas>
 
+  <!-- Spieler-Editor (Vorschau im 3D-Canvas dahinter) -->
+  <section id="editor" class="screen">
+    <div class="edpanel">
+      <h2>Spieler-Editor</h2>
+      <div class="edscroll">
+        <div class="field">Körper <div class="edgrid" id="edBody"></div></div>
+        <div class="field">Hautton <div class="colors" id="edSkin"></div></div>
+        <div class="field">Frisur <div class="edgrid" id="edHair"></div></div>
+        <div class="field">Haarfarbe <div class="colors" id="edHairCol"></div></div>
+        <div class="field" id="edBeardF">Bart <div class="seg wrap" id="edBeard"></div></div>
+        <label class="field">Rückennummer <input id="edNum" type="number" min="0" max="99" inputmode="numeric"></label>
+        <div class="field">Schuhe <div class="colors" id="edShoe"></div></div>
+        <div class="field">Tattoo <div class="seg" id="edTattoo"></div></div>
+        <div class="field">Accessoires <div class="edgrid" id="edAcc"></div></div>
+      </div>
+      <div class="edactions">
+        <button id="edRandom">🎲 Zufällig</button>
+        <button id="edCancel">Abbrechen</button>
+        <button id="edSave" class="primary">Speichern</button>
+      </div>
+    </div>
+    <div class="edview">
+      <div class="seg" id="edCam"><button data-v="full" class="on">Ganzkörper</button><button data-v="face">Gesicht</button></div>
+      <p class="edhint">Ziehen zum Drehen</p>
+    </div>
+  </section>
+
   <!-- Hauptmenü -->
   <section id="menu" class="screen visible">
     <div class="panel">
@@ -29,7 +56,9 @@
           <button data-v="m">Spieler</button>
           <button data-v="f">Spielerin</button>
           <button data-v="k">Power-Forward</button>
+          <button data-v="c">Eigener</button>
         </div>
+        <button id="btnEditor" class="editbtn">✏️ Spieler-Editor</button>
       </div>
       <div class="field">Trikotfarbe
         <div id="colors" class="colors"></div>
