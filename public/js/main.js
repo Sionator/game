@@ -1,7 +1,7 @@
 // Client: Menü, Netzwerk, Steuerung, Vorhersage, HUD
 import { createWorld } from './scene.js';
 import { initAudio, sfx, toggleMute } from './audio.js';
-import { HOOP, METER, PLAYER, THREE_R, lerp, clamp, hoopDist } from '/shared/constants.js';
+import { HOOP, METER, PLAYER, lerp, clamp, hoopDist, burstDir } from '/shared/constants.js';
 import { stepMove } from '/shared/sim.js';
 
 const $ = (s) => document.querySelector(s);
@@ -21,7 +21,10 @@ const S = {
   name: store.get('sb_name', ''),
   color: store.get('sb_color', COLORS[Math.floor(Math.random() * 4)]),
   target: 11,
+  mode: store.get('sb_mode', '1v1'),
   room: null,
+  myTeam: 'A',
+  localHand: null, // vorhergesagte Ballhand bis der Server bestätigt
   players: {},
   inGame: false,
   snaps: [],
@@ -81,15 +84,16 @@ function onMessage(m) {
       break;
     case 'ev': onEvent(m.e); break;
     case 'rematch': {
-      const other = m.ids.filter((id) => id !== S.myId).length;
       const mine = m.ids.includes(S.myId);
-      $('#rematchHint').textContent = mine && !other ? 'Warte auf Gegner…' : other && !mine ? 'Dein Gegner will eine Revanche! 🔥' : '';
+      const n = m.ids.length;
+      $('#rematchHint').textContent = mine ? `Warte auf die anderen… (${n}/${m.need})` : `${n}/${m.need} wollen eine Revanche! 🔥`;
       break;
     }
-    case 'oppLeft':
-      toast('Dein Gegner hat das Spiel verlassen.');
+    case 'toLobby':
+      if (m.msg) toast(m.msg);
       leaveGame();
       showScreen('lobby');
+      if (S.room) onRoom(S.room);
       break;
   }
 }
@@ -114,6 +118,14 @@ function buildMenu() {
     };
     cw.appendChild(b);
   }
+  const setMode = (v) => {
+    S.mode = v;
+    store.set('sb_mode', v);
+    for (const x of document.querySelectorAll('#modeSeg button')) x.classList.toggle('on', x.dataset.v === v);
+    $('#botLabel').textContent = v === '2v2' ? 'Du + Bot gegen 2 Bots:' : 'Üben gegen Bot:';
+  };
+  for (const b of document.querySelectorAll('#modeSeg button')) b.onclick = () => setMode(b.dataset.v);
+  setMode(S.mode === '2v2' ? '2v2' : '1v1');
   for (const b of document.querySelectorAll('#targetSeg button')) {
     b.onclick = () => {
       S.target = +b.dataset.v;
@@ -128,21 +140,27 @@ function buildMenu() {
     $('#menuErr').textContent = '';
     hello();
   };
-  $('#btnCreate').onclick = () => { prep(); send({ t: 'create', target: S.target }); };
+  $('#btnCreate').onclick = () => { prep(); send({ t: 'create', target: S.target, mode: S.mode }); };
   $('#btnJoin').onclick = () => {
     const code = $('#code').value.trim().toUpperCase();
     if (code.length !== 4) { $('#menuErr').textContent = 'Bitte 4-stelligen Code eingeben.'; return; }
     prep(); send({ t: 'join', code });
   };
   $('#code').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#btnJoin').click(); });
-  for (const b of document.querySelectorAll('.bot')) b.onclick = () => { prep(); send({ t: 'bot', level: b.dataset.l, target: S.target }); };
+  for (const b of document.querySelectorAll('.bot')) b.onclick = () => { prep(); send({ t: 'bot', level: b.dataset.l, target: S.target, mode: S.mode }); };
 
   $('#btnCopy').onclick = async () => {
     const link = location.origin + '/?room=' + (S.room && S.room.code);
-    try { await navigator.clipboard.writeText(link); toast('Link kopiert! Schick ihn deinem Freund 📲'); }
+    try { await navigator.clipboard.writeText(link); toast('Link kopiert! Schick ihn deinen Freunden 📲'); }
     catch { prompt('Link kopieren:', link); }
   };
   $('#btnStart').onclick = () => { initAudio(); send({ t: 'start' }); };
+  $('#btnTeam').onclick = () => send({ t: 'team' });
+  for (const [sel, key] of [['#lobbyMode', 'mode'], ['#lobbyTargetSeg', 'target'], ['#lobbyLevel', 'level']]) {
+    for (const b of document.querySelectorAll(sel + ' button')) {
+      b.onclick = () => send({ t: 'settings', [key]: key === 'target' ? +b.dataset.v : b.dataset.v });
+    }
+  }
   $('#btnLeave').onclick = () => { send({ t: 'leave' }); S.room = null; showScreen('menu'); };
   $('#btnRematch').onclick = () => { send({ t: 'rematch' }); $('#btnRematch').disabled = true; $('#rematchHint').textContent = 'Warte auf Gegner…'; };
   $('#btnToLobby').onclick = () => { send({ t: 'leave' }); S.room = null; leaveGame(); showScreen('menu'); };
@@ -170,34 +188,48 @@ function onRoom(m) {
   S.room = m;
   for (const p of m.players) S.players[p.id] = p;
   if (m.private) return; // Bot-Spiel: kein Warteraum
-  if (S.inGame && m.playing) return;
-  if (!S.inGame && !$('#over').classList.contains('visible')) showScreen('lobby');
+  if (S.inGame) return;
+  if (!$('#over').classList.contains('visible')) showScreen('lobby');
   $('#roomCode').textContent = m.code;
-  const list = $('#players');
-  list.innerHTML = '';
-  for (let i = 0; i < 2; i++) {
-    const p = m.players[i];
-    const d = document.createElement('div');
-    d.className = 'pl' + (p ? '' : ' empty');
-    if (p) {
-      const dot = document.createElement('span');
-      dot.className = 'dot';
-      dot.style.background = p.color;
-      const nm = document.createElement('span');
-      nm.textContent = p.name + (p.id === S.myId ? ' (du)' : '');
-      const tag = document.createElement('span');
-      tag.className = 'tag';
-      tag.textContent = p.id === m.host ? 'Host' : '';
-      d.append(dot, nm, tag);
-    } else d.textContent = 'Wartet auf Spieler…';
-    list.appendChild(d);
+  const humans = m.players.filter((p) => !p.bot);
+  const half = m.cap / 2;
+  const box = $('#teams');
+  box.innerHTML = '';
+  for (const t of ['A', 'B']) {
+    const col = document.createElement('div');
+    col.className = 'col';
+    const h = document.createElement('h3');
+    h.textContent = m.mode === '1v1' ? (t === 'A' ? 'Spieler 1' : 'Spieler 2') : `Team ${t}`;
+    col.appendChild(h);
+    const list = humans.filter((p) => p.team === t);
+    for (let i = 0; i < half; i++) {
+      const p = list[i];
+      const d = document.createElement('div');
+      d.className = 'pl' + (p ? (p.id === S.myId ? ' me' : '') : ' empty');
+      if (p) {
+        const dot = document.createElement('span');
+        dot.className = 'dot';
+        dot.style.background = p.color;
+        const nm = document.createElement('span');
+        nm.textContent = p.name + (p.id === m.host ? ' 👑' : '');
+        d.append(dot, nm);
+      } else d.textContent = '🤖 Bot (frei)';
+      col.appendChild(d);
+    }
+    box.appendChild(col);
   }
   const host = m.host === S.myId;
-  const full = m.players.length === 2;
+  const full = humans.length === m.cap;
+  $('#hostSettings').classList.toggle('hidden', !host);
+  const on = (sel, v) => { for (const b of document.querySelectorAll(sel + ' button')) b.classList.toggle('on', b.dataset.v === String(v)); };
+  on('#lobbyMode', m.mode); on('#lobbyTargetSeg', m.target); on('#lobbyLevel', m.level);
+  const me = m.players.find((p) => p.id === S.myId);
+  const other = me && me.team === 'A' ? 'B' : 'A';
+  $('#btnTeam').classList.toggle('hidden', humans.filter((p) => p.team === other).length >= half);
   $('#btnStart').classList.toggle('hidden', !host);
-  $('#btnStart').disabled = !full;
-  $('#lobbyTarget').textContent = `Spiel bis ${m.target} Punkte`;
-  $('#lobbyHint').textContent = !full ? 'Schick den Code oder Link an einen Freund!' : host ? 'Bereit? Los geht\'s!' : 'Warte, bis der Host startet…';
+  $('#btnStart').textContent = full ? 'Spiel starten' : 'Mit Bots auffüllen & starten';
+  $('#lobbyTarget').textContent = `${m.mode === '2v2' ? '2 gegen 2' : '1 gegen 1'} · Spiel bis ${m.target} Punkte`;
+  $('#lobbyHint').textContent = !full ? 'Schick den Code oder Link an deine Freunde!' : host ? 'Alle da – los geht\'s!' : 'Warte, bis der Host startet…';
 }
 
 // ------------------------------------------------------------------ Spielstart
@@ -210,12 +242,17 @@ function startGame(m) {
   S.over = null;
   S.localY = 0; S.localVy = 0;
   S.shoot.active = false;
+  S.mode = m.mode;
+  S.localHand = null;
+  const meP = m.players.find((p) => p.id === S.myId);
+  S.myTeam = meP ? meP.team : 'A';
   for (const p of m.players) {
     S.players[p.id] = p;
-    S.views[p.id] = world.addPlayer(p, p.id === S.myId);
+    S.views[p.id] = world.addPlayer(p, p.id === S.myId, p.team === S.myTeam);
   }
-  const [a, b] = orderPlayers(m.players);
-  setTeam('#sbA', a); setTeam('#sbB', b);
+  setTeam('#sbA', S.myTeam, m.players);
+  setTeam('#sbB', S.myTeam === 'A' ? 'B' : 'A', m.players);
+  for (const b of document.querySelectorAll('.tb[data-a="pass"]')) b.classList.toggle('hidden', m.mode !== '2v2');
   $('#toWin').textContent = `bis ${m.target}`;
   $('#hud').classList.remove('hidden');
   $('#touch').classList.toggle('hidden', !isTouch);
@@ -225,17 +262,19 @@ function startGame(m) {
   $('#feed').innerHTML = '';
 }
 
-function orderPlayers(list) {
-  const me = list.find((p) => p.id === S.myId);
-  const other = list.find((p) => p.id !== S.myId);
-  return [me || list[0], other || list[1]];
+function setTeam(sel, team, players) {
+  const el = $(sel);
+  const list = players.filter((p) => p.team === team);
+  el.dataset.team = team;
+  el.querySelector('.nm').textContent = list.map((p) => p.name).join(' & ');
+  el.querySelector('.dot').style.background = list[0] ? list[0].color : '#555';
 }
 
-function setTeam(sel, p) {
-  const el = $(sel);
-  el.dataset.id = p ? p.id : '';
-  el.querySelector('.nm').textContent = p ? p.name : '';
-  el.querySelector('.dot').style.background = p ? p.color : '#555';
+function teamOf(id) { return S.players[id] && S.players[id].team; }
+function teamName(t) {
+  const list = Object.values(S.players).filter((p) => p.team === t && S.views[p.id]);
+  if (t === S.myTeam && S.mode === '2v2') return 'Dein Team';
+  return list.map((p) => p.name).join(' & ') || `Team ${t}`;
 }
 
 function leaveGame() {
@@ -285,8 +324,10 @@ addEventListener('keydown', (e) => {
   if (e.repeat) return;
   keys.add(e.code);
   if (e.code === 'Space') shootDown();
-  else if (e.code === 'KeyE') doSteal();
-  else if (e.code === 'KeyQ') doMove();
+  else if (e.code === 'KeyQ') doDribble(1);
+  else if (e.code === 'KeyE') doDribble(-1);
+  else if (e.code === 'KeyC') doSwitch();
+  else if (e.code === 'KeyF') send({ t: 'pass' });
   else if (e.code === 'KeyM') toast(toggleMute() ? 'Ton aus 🔇' : 'Ton an 🔊');
   else if (/^Digit[1-8]$/.test(e.code)) send({ t: 'emote', id: +e.code.slice(5) - 1 });
 });
@@ -334,21 +375,32 @@ function shootUp() {
   setTimeout(() => $('#meter').classList.add('hidden'), 350);
 }
 
-function doSteal() {
-  const s = latest();
-  if (!s || s.ph !== 'play') return;
-  send({ t: 'steal' });
+function myHand() {
+  const me = meSnap();
+  if (S.localHand && performance.now() < S.localHand.until) return S.localHand.hd;
+  return me ? me.hd : 1;
 }
 
-function doMove() {
+// Q/E: Dribble-Move (mit Ball) bzw. Steal-Versuch (ohne Ball)
+function doDribble(side) {
   const s = latest(), me = meSnap(), L = S.local;
-  if (!s || !me || !L || s.ph !== 'play' || me.st !== 'free' || L.dashCd > 0 || S.localY > 0.05) return;
-  const i = currentInput();
-  let dx = i.mx, dz = i.mz;
-  if (Math.hypot(dx, dz) < 0.1) { dx = Math.cos(L.f); dz = -Math.sin(L.f); }
-  const l = Math.hypot(dx, dz);
-  L.dashDx = dx / l; L.dashDz = dz / l; L.dashT = PLAYER.dashTime; L.dashCd = PLAYER.dashCd;
-  send({ t: 'move', dx: +dx.toFixed(2), dz: +dz.toFixed(2) });
+  if (!s || !me || !L || s.ph !== 'play' || me.st !== 'free' || S.localY > 0.05) return;
+  send({ t: 'dribble', side });
+  if (s.b.h !== S.myId) { const v = S.views[S.myId]; if (v) v.reach(); return; }
+  if (L.moveCd > 0) return;
+  const d = burstDir(L.x, L.z, side);
+  L.dashDx = d.dx; L.dashDz = d.dz; L.dashT = PLAYER.burstTime;
+  L.dashV = L.stamina < 0.1 ? 5 : PLAYER.burstSpeed;
+  L.moveCd = PLAYER.moveCd;
+  S.localHand = { hd: side, mv: myHand() !== side ? 'cross' : 'drive', until: performance.now() + 250 + S.rtt };
+}
+
+// C: Handwechsel
+function doSwitch() {
+  const s = latest(), me = meSnap();
+  if (!s || !me || s.ph !== 'play' || me.st !== 'free' || s.b.h !== S.myId) return;
+  send({ t: 'switch' });
+  S.localHand = { hd: -myHand(), mv: 'legs', until: performance.now() + 250 + S.rtt };
 }
 
 // Touch
@@ -385,8 +437,10 @@ function setupTouch() {
       b.setPointerCapture(e.pointerId);
       if (a === 'shoot') shootDown();
       else if (a === 'sprint') { touchInput.sprint = true; b.classList.add('on'); }
-      else if (a === 'steal') doSteal();
-      else if (a === 'move') doMove();
+      else if (a === 'left') doDribble(-1);
+      else if (a === 'right') doDribble(1);
+      else if (a === 'switch') doSwitch();
+      else if (a === 'pass') send({ t: 'pass' });
     });
     const up = () => {
       if (a === 'shoot') shootUp();
@@ -471,8 +525,8 @@ function onEvent(e) {
       const col = new THREE.Color(colorOf(e.id));
       fx.burst(HOOP.x, HOOP.y - 0.3, HOOP.z, [col, 0xffffff, 0xffd23f], e.pts === 3 || e.dunk ? 90 : 45, e.dunk ? 5 : 3.5);
       const t = e.dunk ? 'DUNK! 💥' : e.pts === 3 ? (e.swish ? 'SWISH – DREIER!' : 'DREIER!') : e.swish ? 'SWISH!' : '+2';
-      big(t, `${nameOf(e.id)} +${e.pts}`);
-      feed(`${nameOf(e.id)} ${e.dunk ? 'dunkt' : 'trifft'} (+${e.pts})`, colorOf(e.id));
+      big(t, `${nameOf(e.id)} +${e.pts}` + (e.assist ? ` · Assist ${nameOf(e.assist)}` : ''));
+      feed(`${nameOf(e.id)} ${e.dunk ? 'dunkt' : 'trifft'} (+${e.pts})` + (e.assist ? ` – Assist ${nameOf(e.assist)}` : ''), colorOf(e.id));
       if (e.fire) {
         setTimeout(() => { big('ON FIRE 🔥', `${nameOf(e.id)} ist heiß!`, 1600); sfx.fire(); }, 900);
         feed(`${nameOf(e.id)} ist ON FIRE 🔥`, '#ff7a1a');
@@ -484,9 +538,9 @@ function onEvent(e) {
       big('NICHT GEKLÄRT!', 'Korb zählt nicht – erst hinter die Dreierlinie!', 1800);
       break;
     case 'turnover':
-      if (e.reason === 'shotclock') { sfx.buzzer(); big('WURFUHR!', `Ball für ${nameOf(e.id)}`); }
-      else if (e.reason === 'out') { sfx.whistle(); big('AUS!', `Ball für ${nameOf(e.id)}`); }
-      else if (e.reason === 'stuck') { sfx.whistle(); big('HÄNGT FEST', `Ball für ${nameOf(e.id)}`); }
+      if (e.reason === 'shotclock') { sfx.buzzer(); big('WURFUHR!', `Ball für ${teamName(e.team)}`); }
+      else if (e.reason === 'out') { sfx.whistle(); big('AUS!', `Ball für ${teamName(e.team)}`); }
+      else if (e.reason === 'stuck') { sfx.whistle(); big('HÄNGT FEST', `Ball für ${teamName(e.team)}`); }
       break;
     case 'steal':
       sfx.steal();
@@ -503,15 +557,38 @@ function onEvent(e) {
     case 'ankle':
       sfx.squeak(); setTimeout(() => sfx.squeak(), 90); sfx.cheer(true);
       big('ANKLE BREAKER! 🦴', `${nameOf(e.id)} legt ${nameOf(e.victim)} hin`, 1600);
+      S.shake = 0.2;
       feed(`${nameOf(e.id)} → Ankle Breaker!`, colorOf(e.id));
       break;
-    case 'dash': sfx.squeak(); break;
+    case 'move': {
+      sfx.squeak();
+      if (mine) S.localHand = null; // Server hat bestätigt
+      const names = { cross: 'Crossover', drive: 'Drive', legs: 'Zwischen den Beinen' };
+      const combos = { double: 'Doppel-Crossover!', hesi: 'Hesi-Cross!', legsdrive: 'Beine → Drive!', legslegs: 'Doppel-Beine!', legscross: 'Beine → Crossover!' };
+      if (mine || e.combo) popMove(e.id, e.combo ? combos[e.combo] : names[e.kind], !!e.combo);
+      break;
+    }
+    case 'pass': sfx.shoot(); break;
+    case 'call':
+      if (v) v.showEmote('Hier! 🙋');
+      if (teamOf(e.id) === S.myTeam && !mine) sfx.click();
+      break;
+    case 'intercept':
+      sfx.steal();
+      big('ABGEFANGEN! ✋', `${nameOf(e.id)} schnappt sich den Pass`, 1200);
+      feed(`${nameOf(e.id)} fängt den Pass von ${nameOf(e.victim)} ab`, colorOf(e.id));
+      break;
+    case 'replaced':
+      toast(`${e.name} hat das Spiel verlassen – ein Bot übernimmt 🤖`);
+      if (S.players[e.id]) { S.players[e.id].name = e.name + ' (Bot)'; S.players[e.id].bot = true; }
+      break;
     case 'dunk':
       sfx.dunk();
       S.shake = 0.45;
       break;
     case 'pickup':
       if (e.rebound) feed(`Rebound ${nameOf(e.id)}`, colorOf(e.id));
+      if (e.id === S.myId) S.localHand = null;
       break;
     case 'cleared':
       if (mine) { flash('Geklärt ✓', 'ok'); sfx.click(); }
@@ -525,39 +602,61 @@ function onEvent(e) {
     case 'emote': if (v) { v.showEmote(EMOTES[e.e] || '?'); sfx.click(); } break;
     case 'over': {
       S.over = e;
-      const won = e.winner === S.myId;
+      const won = e.winner === S.myTeam;
       setTimeout(() => { won ? sfx.win() : sfx.lose(); }, 400);
-      big(won ? 'SIEG! 🏆' : 'VERLOREN', `${nameOf(e.winner)} gewinnt`, 2200);
+      big(won ? 'SIEG! 🏆' : 'VERLOREN', `${teamName(e.winner)} gewinnt`, 2200);
       setTimeout(() => showOver(e), 2300);
       break;
     }
   }
 }
 
+let popT = 0;
+function popMove(id, text, combo) {
+  const el = $('#movePop');
+  const v = S.views[id];
+  if (!v) return;
+  tmp.set(v.root.position.x, v.root.position.y + 2.6, v.root.position.z).project(camera);
+  el.style.left = (tmp.x * 0.5 + 0.5) * innerWidth + 'px';
+  el.style.top = (-tmp.y * 0.5 + 0.5) * innerHeight + 'px';
+  el.textContent = text;
+  el.style.color = combo ? '#fde047' : '#7dd3fc';
+  el.style.fontSize = combo ? '1.4rem' : '1.05rem';
+  el.classList.add('show');
+  clearTimeout(popT);
+  popT = setTimeout(() => el.classList.remove('show'), 550);
+}
+
 function showOver(e) {
   if (!S.inGame) return;
-  const won = e.winner === S.myId;
-  $('#overTitle').textContent = won ? '🏆 Du hast gewonnen!' : `😤 ${nameOf(e.winner)} gewinnt`;
-  const ids = Object.keys(e.score);
-  const [a, b] = ids.includes(S.myId) ? [S.myId, ids.find((x) => x !== S.myId)] : ids;
-  $('#overScore').textContent = `${e.score[a]} : ${e.score[b]}`;
+  const won = e.winner === S.myTeam;
+  const oppT = S.myTeam === 'A' ? 'B' : 'A';
+  $('#overTitle').textContent = won ? (S.mode === '2v2' ? '🏆 Ihr habt gewonnen!' : '🏆 Du hast gewonnen!') : `😤 ${teamName(e.winner)} gewinnt`;
+  $('#overScore').textContent = `${e.score[S.myTeam]} : ${e.score[oppT]}`;
   const st = e.stats;
+  const ids = Object.keys(st).sort((a, b) => (st[a].team === S.myTeam ? 0 : 1) - (st[b].team === S.myTeam ? 0 : 1));
   const pct = (m, n) => (n ? Math.round((m / n) * 100) + '%' : '–');
   const rows = [
-    ['', nameOf(a), nameOf(b)],
-    ['Punkte', st[a].pts, st[b].pts],
-    ['Würfe', `${st[a].fgm}/${st[a].fga} (${pct(st[a].fgm, st[a].fga)})`, `${st[b].fgm}/${st[b].fga} (${pct(st[b].fgm, st[b].fga)})`],
-    ['Dreier', `${st[a].tpm}/${st[a].tpa}`, `${st[b].tpm}/${st[b].tpa}`],
-    ['Dunks', st[a].dunks, st[b].dunks],
-    ['Blocks', st[a].blocks, st[b].blocks],
-    ['Steals', st[a].steals, st[b].steals],
-    ['Ankle Breaker', st[a].ankles, st[b].ankles],
+    ['', ...ids.map(nameOf)],
+    ['Punkte', ...ids.map((i) => st[i].pts)],
+    ['Würfe', ...ids.map((i) => `${st[i].fgm}/${st[i].fga} (${pct(st[i].fgm, st[i].fga)})`)],
+    ['Dreier', ...ids.map((i) => `${st[i].tpm}/${st[i].tpa}`)],
+    ...(S.mode === '2v2' ? [['Assists', ...ids.map((i) => st[i].ast)]] : []),
+    ['Dunks', ...ids.map((i) => st[i].dunks)],
+    ['Blocks', ...ids.map((i) => st[i].blocks)],
+    ['Steals', ...ids.map((i) => st[i].steals)],
+    ['Ankle Breaker', ...ids.map((i) => st[i].ankles)],
   ];
   const t = $('#statsTable');
   t.innerHTML = '';
-  rows.forEach((r, i) => {
+  rows.forEach((r, ri) => {
     const tr = document.createElement('tr');
-    for (const c of r) { const td = document.createElement(i ? 'td' : 'th'); td.textContent = c; tr.appendChild(td); }
+    r.forEach((c, ci) => {
+      const td = document.createElement(ri ? 'td' : 'th');
+      td.textContent = c;
+      if (ci > 0 && st[ids[ci - 1]].team === S.myTeam) td.className = 'mine';
+      tr.appendChild(td);
+    });
     t.appendChild(tr);
   });
   showScreen('over');
@@ -597,7 +696,8 @@ function updateLocal(dt, now) {
   if (!s || !me) return null;
   if (!S.local) S.local = { x: me.x, z: me.z, vx: 0, vz: 0, f: me.f, stamina: 1, dashT: 0, dashDx: 0, dashDz: 0, dashCd: 0, y: 0 };
   const L = S.local;
-  L.dashCd = Math.max(0, L.dashCd - dt);
+  L.moveCd = Math.max(0, (L.moveCd || 0) - dt);
+  L.speedMul = me.sm ?? 1;
   const hasBall = s.b.h === S.myId;
   const canPredict = me.st === 'free' && s.ph !== 'check' && s.ph !== 'over' && !S.shoot.active;
   const inp = currentInput();
@@ -634,7 +734,9 @@ function updateLocal(dt, now) {
   } else if (me.y > 0.4) {
     S.localY = me.y; // Server sagt: wir springen
   }
-  return { ...me, x: L.x, z: L.z, vx: L.vx, vz: L.vz, f: L.f, y: S.localY, shootingLocal: S.shoot.active };
+  const lh = S.localHand && now < S.localHand.until ? S.localHand : null;
+  return { ...me, x: L.x, z: L.z, vx: L.vx, vz: L.vz, f: L.f, y: S.localY, shootingLocal: S.shoot.active,
+    hd: lh ? lh.hd : me.hd, mv: lh ? lh.mv : me.mv };
 }
 
 // ------------------------------------------------------------------ Hauptschleife
@@ -688,8 +790,7 @@ function updateGame(dt, now) {
     const view = S.views[id];
     const ps = id === S.myId && myState ? myState : lerpP(id);
     if (!ps) continue;
-    const other = Object.keys(S.views).find((x) => x !== id);
-    const defending = holder && holder === other && s.ph === 'play';
+    const defending = holder && teamOf(holder) !== teamOf(id) && s.ph === 'play';
     view.update({ ...ps, hasBall: holder === id, defending }, dt, (vw) => sfx.dribble(vw.id === S.myId ? 0.22 : 0.1));
     view._state = { ...ps, hasBall: holder === id };
     if (ps.fire && Math.random() < 0.5) fx.fire(ps.x, 0.1, ps.z, 1);
@@ -738,13 +839,24 @@ function updateGame(dt, now) {
 }
 
 function updateHud(s, me, now) {
+  const holderTeam = s.b.h ? teamOf(s.b.h) : null;
   for (const sel of ['#sbA', '#sbB']) {
     const el = $(sel);
-    const id = el.dataset.id;
-    el.querySelector('.pts').textContent = s.score[id] ?? 0;
-    el.classList.toggle('poss', s.b.h === id);
-    const p = s.p.find((x) => x.id === id);
-    el.classList.toggle('fire', !!(p && p.fire));
+    const t = el.dataset.team;
+    el.querySelector('.pts').textContent = s.score[t] ?? 0;
+    el.classList.toggle('poss', holderTeam === t);
+    el.classList.toggle('fire', s.p.some((x) => x.tm === t && x.fire));
+  }
+  // Touch-Buttons: ohne Ball werden Links/Rechts zu "Klau", Pass zu "Fordern"
+  if (isTouch) {
+    const mine = s.b.h === S.myId;
+    for (const b of document.querySelectorAll('.tb[data-a="left"] small, .tb[data-a="right"] small')) {
+      b.textContent = mine ? (b.parentElement.dataset.a === 'left' ? 'Links' : 'Rechts') : 'Klau';
+    }
+    const ps = document.querySelector('.tb[data-a="pass"] small');
+    if (ps) ps.textContent = mine ? 'Pass' : 'Fordern';
+    const sw = document.querySelector('.tb[data-a="switch"]');
+    if (sw) sw.classList.toggle('dim', !mine);
   }
   const sc = $('#shotClock');
   const secs = s.b.h ? Math.ceil(s.sc) : Math.ceil(s.sc);
@@ -755,18 +867,20 @@ function updateHud(s, me, now) {
   const st = $('#status');
   let text = '', cls = '';
   const holder = s.b.h && s.p.find((p) => p.id === s.b.h);
-  const needClear = holder && !holder.cl && s.ph === 'play';
+  const needClear = holder && !s.cl && s.ph === 'play';
+  const ourBall = holder && holder.tm === S.myTeam;
   if (S.statusFlash.until > now) { text = S.statusFlash.text; cls = S.statusFlash.cls; }
   else if (s.ph === 'check') text = `Check-Ball · ${nameOf(s.b.h)} greift an`;
   else if (needClear && holder.id === S.myId) { text = '⤴ Ball klären! Raus hinter die Dreierlinie'; cls = 'warn'; }
-  else if (needClear) text = `${nameOf(holder.id)} muss klären`;
+  else if (needClear && ourBall) { text = '⤴ Ball klären!'; cls = 'warn'; }
+  else if (needClear) text = `${holder ? teamName(holder.tm) : ''} muss klären`;
   st.textContent = text;
   st.className = cls;
   world.clearLine.visible = !!needClear;
   if (needClear) {
     const mat = world.clearLine.material;
     mat.opacity = 0.5 + Math.sin(now / 150) * 0.35;
-    mat.color.set(holder.id === S.myId ? 0xffb020 : 0x94a3b8);
+    mat.color.set(ourBall ? 0xffb020 : 0x94a3b8);
   }
 
   if (me) $('#stamina div').style.width = Math.round(me.sta * 100) + '%';

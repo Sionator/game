@@ -1,10 +1,16 @@
-// Räume, Spieler-Verbindungen und Nachrichten-Routing
+// Räume, Teams, Spieler-Verbindungen und Nachrichten-Routing
 import { Match } from './match.js';
 import { Bot } from './bot.js';
 import { SNAP_EVERY } from '../shared/constants.js';
 
 const COLORS = ['#e8413c', '#2f7cf6', '#22c55e', '#f59e0b', '#a855f7', '#ec4899', '#14b8a6', '#f8fafc'];
 const EMOTES = 8;
+const LEVELS = ['easy', 'medium', 'hard'];
+const BOT_NAMES = {
+  easy: ['Rookie-Bot', 'Bankdrücker-Bot', 'Airball-Bot'],
+  medium: ['Street-Bot', 'Asphalt-Bot', 'Käfig-Bot'],
+  hard: ['MVP-Bot', 'Legenden-Bot', 'Hall-of-Fame-Bot'],
+};
 let nextId = 1;
 
 function makeCode(rooms) {
@@ -16,6 +22,7 @@ function makeCode(rooms) {
 }
 
 const clean = (s, n) => String(s || '').replace(/[<>]/g, '').trim().slice(0, n);
+const capOf = (mode) => (mode === '2v2' ? 4 : 2);
 
 export class Lobby {
   constructor() {
@@ -34,37 +41,51 @@ export class Lobby {
   }
 
   handle(c, m) {
+    const r = c.room;
     switch (m.t) {
       case 'ping': send(c.ws, { t: 'pong', ts: m.ts }); break;
       case 'hello':
         c.name = clean(m.name, 16) || 'Spieler';
         c.color = /^#[0-9a-f]{6}$/i.test(m.color) ? m.color : COLORS[0];
         break;
-      case 'create': this.create(c, m); break;
+      case 'create': {
+        const room = this.newRoom(c, m);
+        this.broadcastRoom(room);
+        break;
+      }
       case 'join': this.join(c, clean(m.code, 4).toUpperCase()); break;
       case 'bot': this.createBot(c, m); break;
       case 'leave': this.leave(c); break;
+      case 'team': {
+        if (!r || r.match) break;
+        const want = c.team === 'A' ? 'B' : 'A';
+        if (r.members.filter((x) => x.team === want).length < r.cap / 2) { c.team = want; this.broadcastRoom(r); }
+        break;
+      }
       case 'settings': {
-        const r = c.room;
-        if (r && r.host === c.id && !r.match) { r.target = m.target === 21 ? 21 : 11; this.broadcastRoom(r); }
+        if (!r || r.host !== c.id || r.match) break;
+        if (m.target === 11 || m.target === 21) r.target = m.target;
+        if ((m.mode === '1v1' || m.mode === '2v2') && r.members.length <= capOf(m.mode)) {
+          r.mode = m.mode;
+          r.cap = capOf(m.mode);
+          this.balanceTeams(r);
+        }
+        if (LEVELS.includes(m.level)) r.level = m.level;
+        this.broadcastRoom(r);
         break;
       }
-      case 'start': {
-        const r = c.room;
-        if (r && r.host === c.id && r.members.length === 2 && (!r.match || r.match.phase === 'over')) this.startMatch(r);
+      case 'start':
+        if (r && r.host === c.id && (!r.match || r.match.phase === 'over')) this.startMatch(r);
         break;
-      }
       case 'rematch': {
-        const r = c.room;
         if (!r || !r.match || r.match.phase !== 'over') break;
         r.rematch.add(c.id);
-        if (r.bot) r.rematch.add(r.bot.id);
-        this.broadcast(r, { t: 'rematch', ids: [...r.rematch] });
-        if (r.rematch.size >= 2 && r.members.length === 2) this.startMatch(r);
+        const humans = r.members.filter((x) => !x.bot);
+        this.broadcast(r, { t: 'rematch', ids: [...r.rematch], need: humans.length });
+        if (humans.every((x) => r.rematch.has(x.id))) this.startMatch(r);
         break;
       }
       case 'emote': {
-        const r = c.room;
         const id = m.id | 0;
         if (r && id >= 0 && id < EMOTES) {
           const now = Date.now();
@@ -75,39 +96,35 @@ export class Lobby {
         break;
       }
       default: {
-        const r = c.room;
         if (!r || !r.match) return;
         const g = r.match;
         if (m.t === 'in') g.onInput(c.id, m);
         else if (m.t === 'shoot') g.onShootStart(c.id);
         else if (m.t === 'release') g.onShootRelease(c.id, m.v);
-        else if (m.t === 'steal') g.onSteal(c.id);
-        else if (m.t === 'move') g.onMove(c.id, +m.dx || 0, +m.dz || 0);
+        else if (m.t === 'dribble') g.onDribble(c.id, m.side);
+        else if (m.t === 'switch') g.onSwitch(c.id);
+        else if (m.t === 'pass') g.onPass(c.id);
       }
     }
   }
 
-  newRoom(c, target) {
+  newRoom(c, m) {
     this.leave(c);
     const code = makeCode(this.rooms);
-    const r = { code, host: c.id, members: [c], target: target === 21 ? 21 : 11, match: null, bot: null, rematch: new Set(), tick: 0 };
+    const mode = m.mode === '2v2' ? '2v2' : '1v1';
+    const r = {
+      code, host: c.id, mode, cap: capOf(mode), members: [c],
+      target: m.target === 21 ? 21 : 11, level: LEVELS.includes(m.level) ? m.level : 'medium',
+      match: null, botAIs: [], rematch: new Set(), tick: 0, private: false,
+    };
+    c.team = 'A';
     this.rooms.set(code, r);
     c.room = r;
     return r;
   }
 
-  create(c, m) {
-    const r = this.newRoom(c, m.target);
-    this.broadcastRoom(r);
-  }
-
   createBot(c, m) {
-    const r = this.newRoom(c, m.target);
-    const level = ['easy', 'medium', 'hard'].includes(m.level) ? m.level : 'medium';
-    const names = { easy: 'Rookie-Bot', medium: 'Street-Bot', hard: 'MVP-Bot' };
-    const color = COLORS.find((x) => x.toLowerCase() !== c.color.toLowerCase()) || COLORS[1];
-    r.bot = { id: 'bot' + nextId++, name: names[level], color, level, bot: true };
-    r.members.push(r.bot);
+    const r = this.newRoom(c, m);
     r.private = true;
     this.startMatch(r);
   }
@@ -116,32 +133,56 @@ export class Lobby {
     const r = this.rooms.get(code);
     if (!r || r.private) return send(c.ws, { t: 'error', msg: 'Raum nicht gefunden.' });
     if (r.members.includes(c)) return;
-    if (r.members.length >= 2) return send(c.ws, { t: 'error', msg: 'Raum ist voll.' });
+    if (r.match && r.match.phase !== 'over') return send(c.ws, { t: 'error', msg: 'Dort läuft gerade ein Spiel.' });
+    const humans = r.members.filter((x) => !x.bot);
+    if (humans.length >= r.cap) return send(c.ws, { t: 'error', msg: 'Raum ist voll.' });
     this.leave(c);
+    r.members = r.members.filter((x) => !x.bot); // Bots aus dem letzten Spiel machen Platz
+    const a = r.members.filter((x) => x.team === 'A').length;
+    const b = r.members.filter((x) => x.team === 'B').length;
+    c.team = a <= b ? 'A' : 'B';
     r.members.push(c);
     c.room = r;
+    if (r.match && r.match.phase === 'over') { r.match = null; r.botAIs = []; this.broadcast(r, { t: 'toLobby' }); }
     this.broadcastRoom(r);
+  }
+
+  balanceTeams(r) {
+    const half = r.cap / 2;
+    for (const t of ['A', 'B']) {
+      const list = r.members.filter((x) => x.team === t);
+      for (const x of list.slice(half)) x.team = t === 'A' ? 'B' : 'A';
+    }
   }
 
   leave(c) {
     const r = c.room;
     if (!r) return;
     c.room = null;
-    r.members = r.members.filter((x) => x !== c);
-    const humans = r.members.filter((x) => !x.bot);
-    if (humans.length === 0) { this.rooms.delete(r.code); return; }
-    if (r.host === c.id) r.host = humans[0].id;
-    if (r.match) {
-      r.match = null;
-      this.broadcast(r, { t: 'oppLeft' });
+    const humansLeft = r.members.filter((x) => !x.bot && x !== c);
+    if (humansLeft.length === 0) { this.rooms.delete(r.code); return; }
+    if (r.host === c.id) r.host = humansLeft[0].id;
+    if (r.match && r.match.phase !== 'over') {
+      // Ein Bot übernimmt den Platz, damit das Spiel weiterlaufen kann
+      const bot = { id: c.id, name: c.name + ' (Bot)', color: c.color, team: c.team, bot: true, level: 'medium' };
+      r.members = r.members.map((x) => (x === c ? bot : x));
+      const p = r.match.get(c.id);
+      if (p) { p.bot = true; p.name = bot.name; }
+      r.botAIs.push(new Bot(r.match, c.id, 'medium'));
+      this.broadcast(r, { t: 'ev', e: { k: 'replaced', id: c.id, name: c.name } });
+    } else {
+      r.members = r.members.filter((x) => x !== c && !x.bot);
+      if (r.match) { r.match = null; r.botAIs = []; this.broadcast(r, { t: 'toLobby', msg: c.name + ' hat den Raum verlassen.' }); }
     }
+    r.rematch.delete(c.id);
     this.broadcastRoom(r);
   }
 
   roomInfo(r) {
     return {
-      t: 'room', code: r.code, host: r.host, target: r.target, playing: !!r.match, private: !!r.private,
-      players: r.members.map((x) => ({ id: x.id, name: x.name, color: x.color, bot: !!x.bot })),
+      t: 'room', code: r.code, host: r.host, target: r.target, mode: r.mode, cap: r.cap, level: r.level,
+      playing: !!(r.match && r.match.phase !== 'over'), private: r.private,
+      players: r.members.map((x) => ({ id: x.id, name: x.name, color: x.color, team: x.team, bot: !!x.bot })),
     };
   }
 
@@ -154,22 +195,29 @@ export class Lobby {
 
   startMatch(r) {
     r.rematch = new Set();
-    // Gleiche Trikotfarbe? Dann bekommt der zweite Spieler eine andere.
-    const [a, b] = r.members;
-    if (a && b && a.color.toLowerCase() === b.color.toLowerCase()) {
-      b.color = COLORS.find((c) => c.toLowerCase() !== a.color.toLowerCase());
+    // Freie Plätze mit Bots füllen
+    const half = r.cap / 2;
+    const names = [...BOT_NAMES[r.level]];
+    for (const t of ['A', 'B']) {
+      while (r.members.filter((x) => x.team === t).length < half) {
+        r.members.push({ id: 'bot' + nextId++, name: names.shift() || 'Bot', color: COLORS[1], team: t, bot: true, level: r.level });
+      }
     }
+    // Trikotfarben pro Team
+    const pick = (t) => (r.members.find((x) => x.team === t && !x.bot) || r.members.find((x) => x.team === t)).color;
+    const colA = pick('A');
+    let colB = pick('B');
+    if (colB.toLowerCase() === colA.toLowerCase()) colB = COLORS.find((c) => c.toLowerCase() !== colA.toLowerCase());
+    const teamColor = { A: colA, B: colB };
+
+    const players = r.members.map((x) => ({ id: x.id, name: x.name, color: teamColor[x.team], team: x.team, bot: !!x.bot }));
     const events = [];
     r.events = events;
-    r.match = new Match(r.members.map((x) => ({ id: x.id, name: x.name, color: x.color, bot: !!x.bot })),
-      { target: r.target }, (e) => events.push(e));
-    r.botAI = r.bot ? new Bot(r.match, r.bot.id, r.bot.level) : null;
+    r.match = new Match(players, { target: r.target }, (e) => events.push(e));
+    r.botAIs = r.members.filter((x) => x.bot).map((x) => new Bot(r.match, x.id, x.level || r.level));
     r.tick = 0;
     this.broadcastRoom(r);
-    this.broadcast(r, {
-      t: 'start', target: r.target,
-      players: r.members.map((x) => ({ id: x.id, name: x.name, color: x.color, bot: !!x.bot })),
-    });
+    this.broadcast(r, { t: 'start', target: r.target, mode: r.mode, players });
     this.flush(r);
   }
 
@@ -182,11 +230,11 @@ export class Lobby {
   step(dt) {
     for (const r of this.rooms.values()) {
       if (!r.match) continue;
-      if (r.botAI) r.botAI.update(dt);
+      for (const b of r.botAIs) b.update(dt);
       r.match.tick(dt);
       this.flush(r);
       r.tick++;
-      if (r.tick % SNAP_EVERY === 0) this.broadcast(r, { t: 's', ...r.match.snapshot() });
+      if (r.match.phase !== 'over' && r.tick % SNAP_EVERY === 0) this.broadcast(r, { t: 's', ...r.match.snapshot() });
     }
   }
 }

@@ -1,20 +1,24 @@
-# 🏀 Streetball 1v1
+# 🏀 Streetball 1v1 · 2v2
 
-Ein **3D-Basketballspiel für zwei Spieler**, das du online mit Freunden im Browser spielst – am PC oder am Handy.
+Ein **3D-Basketballspiel**, das du online mit Freunden im Browser spielst – **1 gegen 1 oder 2 gegen 2**, am PC oder am Handy.
 Nachts auf einem Streetball-Court mitten in der Stadt: Crossover, Dunks, Blocks und Trash-Talk per Emote.
 
 ## Features
 
-- **Echtes 1v1 online** – Raum erstellen, 4-stelligen Code oder Link an einen Freund schicken, los geht's
+- **1v1 und 2v2 online** – Raum erstellen, 4-stelligen Code oder Link verschicken, Teams wählen, los geht's
+- **Freie Plätze füllen Bots** – z. B. du + Freund gegen 2 Bots. Verlässt jemand das Spiel, übernimmt ein Bot
+- **Ball-Handling** – der Ball ist in der rechten oder linken Hand: Drives, Crossover, zwischen den Beinen
+- **Combos** – Doppel-Crossover, Hesi-Cross, Beine→Drive … erhöhen die Chance auf einen Ankle Breaker
+- **Passen & Assists** im 2v2, Ball fordern, Pässe können abgefangen werden
 - **Wurf-Timing wie in NBA 2K** – Leertaste halten, im grünen Bereich loslassen. Zu früh = zu kurz, zu spät = zu lang
 - **Dunks** – mit Sprint auf den Korb zu und werfen 💥
 - **Blocks** – springen, wenn der Gegner wirft (auch Poster-Blocks gegen Dunks!)
-- **Steals** – Ball klauen, wenn du nah genug dran bist
-- **Crossover / Ankle Breaker** – mit dem richtigen Move legst du den Verteidiger auf den Boden 🦴
+- **Steals** – je nachdem, auf welcher Seite der Ball ist: geschützt oder angreifbar
+- **Ankle Breaker** 🦴 – Move gegen einen Verteidiger, der in die falsche Richtung läuft oder gerade daneben gegriffen hat
 - **ON FIRE** 🔥 – 3 Treffer in Folge und dein grüner Bereich wird größer, bis der Gegner trifft
 - **Streetball-Regeln** – nach Rebound oder Steal musst du den Ball erst hinter die Dreierlinie **klären**
 - **14-Sekunden-Wurfuhr**, Spiel bis 11 oder 21
-- **Übungsmodus gegen Bots** (Rookie, Street, MVP)
+- **Übungsmodus gegen Bots** (Rookie, Street, MVP) – im 2v2 mit Bot-Mitspieler
 - **Emotes** (🔥 😂 💪 GG …), Statistiken am Spielende, Revanche-Button
 - **Handy-Steuerung** mit Joystick und Buttons
 - Echte Ball-Physik (Ring, Brett, Netz), synthetisierte Sounds – keine externen Dateien
@@ -27,11 +31,23 @@ Nachts auf einem Streetball-Court mitten in der Stadt: Crossover, Dunks, Blocks 
 | `Shift` | Sprinten (kostet Ausdauer) |
 | `Leertaste` halten & loslassen | Werfen (auf den grünen Bereich achten!) |
 | `Leertaste` + Sprint nah am Korb | Dunk |
+| `Q` | Dribble-Move nach **rechts** |
+| `E` | Dribble-Move nach **links** |
+| `C` | Handwechsel (zwischen den Beinen) |
+| `F` | Pass zum Mitspieler (2v2) – ohne Ball: Ball fordern |
 | `Leertaste` ohne Ball | Springen / Blocken |
-| `E` | Ball klauen |
-| `Q` | Crossover-Move |
+| `Q` / `E` ohne Ball | Ball klauen |
 | `1`–`8` | Emotes |
 | `M` | Ton an/aus |
+
+### Handling im Detail
+
+- Dribbelst du in Richtung deiner **Ballhand**, ist es ein schneller **Drive**.
+- Dribbelst du **zur anderen Seite**, ist es ein **Crossover**: der Ball wandert vor dem Körper in die andere Hand.
+  Das ist stark, aber in dem Moment kann der Verteidiger den Ball leichter klauen.
+- `C` wechselt die Hand **zwischen den Beinen** – sicherer, aber langsamer.
+- Halte den Ball auf der Seite **weg vom Verteidiger**, dann ist er schwer zu klauen.
+- **Combos** (innerhalb von ~1 Sekunde): Crossover → Crossover zurück, Drive → Crossover, `C` → Drive/Crossover.
 
 ## Starten
 
@@ -59,7 +75,7 @@ Server lokal starten und in einem zweiten Terminal:
 npx localtunnel --port 3000
 ```
 
-Den angezeigten `https://…`-Link an deinen Freund schicken.
+Den angezeigten `https://…`-Link an deine Freunde schicken.
 (Alternativ: `cloudflared tunnel --url http://localhost:3000`)
 
 ### 3. Dauerhaft kostenlos hosten (Render)

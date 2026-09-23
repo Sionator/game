@@ -1,6 +1,6 @@
 // 3D-Welt: Court, Korb, Umgebung, Spielerfiguren, Ball und Effekte
 import * as THREE from 'three';
-import { COURT, HOOP, BOARD, BALL_R, THREE_R } from '/shared/constants.js';
+import { COURT, HOOP, BOARD, BALL_R, THREE_R, PLAYER } from '/shared/constants.js';
 
 const PX = 48; // Pixel pro Meter für die Court-Textur
 const FLOOR = { x0: -10, x1: 10, z0: -3, z1: 17 };
@@ -65,7 +65,7 @@ export function createWorld(canvas) {
 
   return {
     THREE, renderer, scene, camera, ball, hoop, fx, clearLine,
-    addPlayer: (info, isMe) => new PlayerView(scene, info, isMe),
+    addPlayer: (info, isMe, isMate) => new PlayerView(scene, info, isMe, isMate),
     render() { renderer.render(scene, camera); },
   };
 }
@@ -437,7 +437,7 @@ const SKINS = ['#f1c7a3', '#d9a27a', '#b87a50', '#8d5a3b', '#5e3b26'];
 const hash = (s) => { let h = 0; for (const c of String(s)) h = (h * 31 + c.charCodeAt(0)) | 0; return Math.abs(h); };
 
 class PlayerView {
-  constructor(scene, info, isMe) {
+  constructor(scene, info, isMe, isMate) {
     this.id = info.id;
     this.scene = scene;
     const col = new THREE.Color(info.color);
@@ -496,10 +496,10 @@ class PlayerView {
     }
 
     // Name + Markierung
-    this.label = textSprite(info.name + (info.bot ? ' 🤖' : ''), { color: isMe ? '#ffe08a' : '#fff' });
+    this.label = textSprite(info.name + (info.bot ? ' 🤖' : ''), { color: isMe ? '#ffe08a' : isMate ? '#86efac' : '#fff' });
     this.label.position.y = 2.35;
     this.root.add(this.label);
-    this.ring = new THREE.Mesh(new THREE.RingGeometry(0.45, 0.55, 32), new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: isMe ? 0.9 : 0.45, depthWrite: false }));
+    this.ring = new THREE.Mesh(new THREE.RingGeometry(0.45, 0.55, 32), new THREE.MeshBasicMaterial({ color: isMe ? col : isMate ? 0x86efac : col, transparent: true, opacity: isMe ? 0.9 : isMate ? 0.7 : 0.35, depthWrite: false }));
     this.ring.rotation.x = -Math.PI / 2;
     this.ring.position.y = 0.015;
     this.ringHolder = new THREE.Group();
@@ -519,6 +519,8 @@ class PlayerView {
     this.reachT = 0;
     this.fallAmt = 0;
     this.f = 0;
+    this.handX = -PLAYER.handX;   // lokales x des Balls: negativ = rechte Hand
+    this.crossMv = '';
     this._v = new THREE.Vector3();
   }
 
@@ -550,14 +552,21 @@ class PlayerView {
     if (air) { lL = -0.5; lR = 0.15; }
 
     const shooting = s.st === 'shoot' || s.shootingLocal;
+    // Ballhand: bei Handwechsel wandert der Ball durch (vor dem Körper oder zwischen den Beinen)
+    const hd = s.hd === -1 ? -1 : 1;
+    const targetX = -hd * PLAYER.handX;
+    if (Math.sign(targetX) !== Math.sign(this.handX) && Math.abs(this.handX) > PLAYER.handX * 0.9) this.crossMv = s.mv === 'legs' ? 'legs' : 'cross';
+    this.handX += (targetX - this.handX) * Math.min(1, dt * 13);
     if (s.hasBall && !shooting && s.st !== 'dunk') {
-      this.dribblePhase += dt * (speed > 3 ? 11 : 8);
+      const crossing = Math.abs(this.handX) < PLAYER.handX * 0.8;
+      this.dribblePhase += dt * (crossing ? 16 : speed > 3 ? 11 : 8);
       const c = Math.abs(Math.cos(this.dribblePhase));
       if (c < this.lastBounce && c < 0.12 && this.lastBounce >= 0.12) onDribble && onDribble(this);
       this.lastBounce = c;
-      aR = -0.45 - (1 - c) * 0.25;
-      aRz = -0.25;
-      crouch = 0.06;
+      const dribArm = -0.45 - (1 - c) * 0.25;
+      if (hd === 1) { aR = dribArm; aRz = -0.25; } else { aL = dribArm; aLz = 0.25; }
+      crouch = crossing ? 0.16 : 0.06;
+      if (crossing && this.crossMv === 'legs') { lL = -0.5; lR = 0.45; } // Ausfallschritt
     }
     if (s.defending && !air) { aLz = 0.9; aRz = -0.9; aL = -0.3; aR = -0.3; crouch = 0.12; }
     if (shooting) { aL = aR = -2.75; aLz = -0.15; aRz = 0.15; lean = 0; }
@@ -595,9 +604,12 @@ class PlayerView {
     else if (shooting) out.set(0, 2.25, 0.18);
     else {
       const c = Math.abs(Math.cos(this.dribblePhase));
-      out.set(-0.36, BALL_R + c * 0.78, 0.32);
+      const cross = 1 - Math.min(1, Math.abs(this.handX) / PLAYER.handX); // 0 = in der Hand, 1 = mitten im Wechsel
+      const z = 0.32 + cross * (this.crossMv === 'legs' ? -0.28 : 0.15);
+      const h = BALL_R + c * (0.78 - cross * 0.4);
+      out.set(this.handX, h, z);
       this.root.localToWorld(out);
-      out.y = BALL_R + c * 0.78 + Math.max(0, s.y) * 0.8;
+      out.y = h + Math.max(0, s.y) * 0.8;
       return out;
     }
     return this.root.localToWorld(out);

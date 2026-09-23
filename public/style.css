@@ -115,8 +115,8 @@ table#statsTable { width: 100%; border-collapse: collapse; font-size: .92rem; }
 #touch { position: fixed; inset: 0; z-index: 6; pointer-events: none; }
 #stick { position: absolute; left: 24px; bottom: 34px; width: 130px; height: 130px; border-radius: 50%; background: rgba(255,255,255,.08); border: 2px solid rgba(255,255,255,.25); pointer-events: auto; }
 #knob { position: absolute; left: 50%; top: 50%; width: 56px; height: 56px; margin: -28px 0 0 -28px; border-radius: 50%; background: rgba(255,255,255,.35); }
-#tbtns { position: absolute; right: 16px; bottom: 26px; display: grid; grid-template-columns: repeat(2, 72px); gap: 10px; pointer-events: auto; }
-.tb { width: 72px; height: 72px; border-radius: 50%; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 1.5rem; padding: 0; background: rgba(255,255,255,.1); border: 2px solid rgba(255,255,255,.3); }
+#tbtns { position: absolute; right: 12px; bottom: 22px; display: grid; grid-template-columns: repeat(3, 64px); gap: 8px; pointer-events: auto; }
+.tb { width: 64px; height: 64px; border-radius: 50%; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 1.5rem; padding: 0; background: rgba(255,255,255,.1); border: 2px solid rgba(255,255,255,.3); }
 .tb small { font-size: .6rem; color: var(--muted); }
 .tb.main { background: rgba(255,122,26,.45); border-color: var(--accent); }
 .tb.on { background: rgba(56,189,248,.5); }
@@ -130,3 +130,20 @@ body.touch #feed { bottom: 190px; }
   #status { top: 62px; font-size: .8rem; }
   .code { font-size: 2.3rem; }
 }
+
+.tb.dim { opacity: .35; }
+.teams { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.teams .col { display: flex; flex-direction: column; gap: 6px; }
+.teams h3 { margin: 0; font-size: .8rem; color: var(--muted); text-transform: uppercase; letter-spacing: .1em; text-align: center; }
+.teams .pl { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: rgba(255,255,255,.05); border-radius: 10px; font-size: .92rem; min-width: 0; }
+.teams .pl span:nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.teams .pl.me { outline: 2px solid var(--accent); }
+.teams .pl.empty { color: var(--muted); font-style: italic; }
+.teams .dot { width: 12px; height: 12px; border-radius: 50%; flex: none; }
+.hostset { display: flex; flex-direction: column; gap: 6px; }
+.hostset .seg button { padding: 6px 8px; font-size: .85rem; }
+.sub.small { font-size: .75rem; margin-top: -2px; }
+#movePop { position: absolute; font-weight: 900; font-style: italic; font-size: 1.1rem; transform: translate(-50%, -50%); text-shadow: 0 2px 6px #000; color: #7dd3fc; opacity: 0; transition: opacity .4s; white-space: nowrap; }
+#movePop.show { opacity: 1; transition: none; }
+#scoreboard .nm { font-size: .88rem; }
+#statsTable .mine { color: var(--accent2); }

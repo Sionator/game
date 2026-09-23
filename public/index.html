@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-  <title>Streetball 1v1</title>
+  <title>Streetball</title>
   <meta name="theme-color" content="#0b0f1a">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏀</text></svg>">
   <link rel="stylesheet" href="style.css">
@@ -17,7 +17,7 @@
   <!-- Hauptmenü -->
   <section id="menu" class="screen visible">
     <div class="panel">
-      <h1><span class="ball">🏀</span> STREETBALL <em>1v1</em></h1>
+      <h1><span class="ball">🏀</span> STREETBALL <em>1v1 · 2v2</em></h1>
       <p class="sub">3D-Streetball gegen deine Freunde – online, direkt im Browser.</p>
 
       <label class="field">Dein Name
@@ -25,6 +25,12 @@
       </label>
       <div class="field">Trikotfarbe
         <div id="colors" class="colors"></div>
+      </div>
+      <div class="field">Modus
+        <div class="seg" id="modeSeg">
+          <button data-v="1v1" class="on">1 gegen 1</button>
+          <button data-v="2v2">2 gegen 2</button>
+        </div>
       </div>
       <div class="field">Spiel bis
         <div class="seg" id="targetSeg">
@@ -40,7 +46,7 @@
           <button id="btnJoin" class="big">Beitreten</button>
         </div>
         <div class="botrow">
-          <span>Üben gegen Bot:</span>
+          <span id="botLabel">Üben gegen Bot:</span>
           <button class="bot" data-l="easy">Rookie</button>
           <button class="bot" data-l="medium">Street</button>
           <button class="bot" data-l="hard">MVP</button>
@@ -54,15 +60,18 @@
           <div><kbd>Shift</kbd></div><div>Sprinten (kostet Ausdauer)</div>
           <div><kbd>Leertaste</kbd> halten</div><div>Wurf aufladen – im <b class="g">grünen Bereich</b> loslassen!</div>
           <div><kbd>Leertaste</kbd> + Sprint nah am Korb</div><div>DUNK 💥</div>
-          <div><kbd>Leertaste</kbd> ohne Ball</div><div>Springen / Blocken</div>
-          <div><kbd>E</kbd></div><div>Ball klauen</div>
-          <div><kbd>Q</kbd></div><div>Crossover – kann den Gegner umhauen (Ankle Breaker!)</div>
+          <div><kbd>Q</kbd> / <kbd>E</kbd></div><div>Dribbeln nach rechts / links. Gegen die Ballhand = <b>Crossover</b></div>
+          <div><kbd>C</kbd></div><div>Handwechsel (zwischen den Beinen)</div>
+          <div><kbd>F</kbd></div><div>Pass zum Mitspieler (2v2) – ohne Ball: Ball fordern</div>
+          <div>Verteidigung</div><div><kbd>Q</kbd>/<kbd>E</kbd> Ball klauen, <kbd>Leertaste</kbd> Springen/Blocken</div>
           <div><kbd>1</kbd>–<kbd>8</kbd></div><div>Emotes</div>
         </div>
         <ul>
           <li>Innerhalb der Linie 2 Punkte, außerhalb 3 Punkte.</li>
           <li><b>Klären:</b> Nach Rebound oder Steal musst du erst hinter die Dreierlinie, sonst zählt der Korb nicht.</li>
           <li>3 Treffer in Folge = <b class="fire">ON FIRE</b> 🔥 – größerer grüner Bereich.</li>
+          <li><b>Handling:</b> Der Ball ist rechts oder links. Auf der Seite weg vom Verteidiger ist er geschützt – beim Crossover vor dem Körper ist er angreifbar.</li>
+          <li><b>Combos</b> (z.&nbsp;B. Doppel-Crossover, Hesi-Cross, Beine→Drive) und Moves gegen einen Verteidiger, der in die falsche Richtung läuft oder gerade daneben gegriffen hat, bringen <b>Ankle Breaker</b> 🦴.</li>
           <li>14 Sekunden Wurfuhr. Nach jedem Korb bekommt der Gegner den Ball.</li>
         </ul>
       </details>
@@ -75,7 +84,14 @@
       <p class="sub">Raum-Code</p>
       <div id="roomCode" class="code">----</div>
       <button id="btnCopy" class="small">🔗 Einladungslink kopieren</button>
-      <div id="players" class="players"></div>
+      <div id="teams" class="teams"></div>
+      <button id="btnTeam" class="small">⇄ Team wechseln</button>
+      <div id="hostSettings" class="hostset">
+        <div class="seg" id="lobbyMode"><button data-v="1v1">1v1</button><button data-v="2v2">2v2</button></div>
+        <div class="seg" id="lobbyTargetSeg"><button data-v="11">bis 11</button><button data-v="21">bis 21</button></div>
+        <div class="seg" id="lobbyLevel"><button data-v="easy">Rookie</button><button data-v="medium">Street</button><button data-v="hard">MVP</button></div>
+        <p class="sub small">Bot-Stärke für leere Plätze</p>
+      </div>
       <div id="lobbyTarget" class="sub"></div>
       <button id="btnStart" class="big primary">Spiel starten</button>
       <p id="lobbyHint" class="sub">Warte auf Gegner…</p>
@@ -96,6 +112,7 @@
     <div id="stamina"><div></div></div>
     <div id="meter" class="hidden"><div class="green"></div><div class="fill"></div></div>
     <div id="grade"></div>
+    <div id="movePop"></div>
     <div id="ping"></div>
     <button id="btnMenu" class="small ghost corner">☰</button>
     <div id="emotes"></div>
@@ -105,10 +122,12 @@
   <div id="touch" class="hidden">
     <div id="stick"><div id="knob"></div></div>
     <div id="tbtns">
-      <button data-a="shoot" class="tb main">🏀<small>Wurf</small></button>
+      <button data-a="left" class="tb"><span>◀</span><small>Links</small></button>
+      <button data-a="switch" class="tb"><span>⇄</span><small>Wechsel</small></button>
+      <button data-a="right" class="tb"><span>▶</span><small>Rechts</small></button>
+      <button data-a="pass" class="tb"><span>🤝</span><small>Pass</small></button>
       <button data-a="sprint" class="tb">⚡<small>Sprint</small></button>
-      <button data-a="steal" class="tb">✋<small>Klau</small></button>
-      <button data-a="move" class="tb">🌀<small>Move</small></button>
+      <button data-a="shoot" class="tb main">🏀<small>Wurf</small></button>
     </div>
   </div>
 

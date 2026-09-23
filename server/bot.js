@@ -1,10 +1,10 @@
-// Einfache KI für den Übungsmodus
-import { HOOP, METER, THREE_R, hoopDist } from '../shared/constants.js';
+// KI für Bots (Übungsmodus, Auffüllen im 2v2, Ersatz bei Verbindungsabbruch)
+import { HOOP, METER, THREE_R, hoopDist, attackAxes } from '../shared/constants.js';
 
 const LEVELS = {
-  easy: { sigma: 0.13, react: 0.35, steal: 0.25, shootOpen: 2.4, speed: 0.75 },
-  medium: { sigma: 0.075, react: 0.2, steal: 0.5, shootOpen: 1.9, speed: 0.9 },
-  hard: { sigma: 0.04, react: 0.1, steal: 0.9, shootOpen: 1.5, speed: 1 },
+  easy: { sigma: 0.13, react: 0.35, steal: 0.25, shootOpen: 2.4, speed: 0.75, moves: 0.6, pass: 0.6 },
+  medium: { sigma: 0.075, react: 0.2, steal: 0.5, shootOpen: 1.9, speed: 0.9, moves: 1.2, pass: 1 },
+  hard: { sigma: 0.04, react: 0.1, steal: 0.9, shootOpen: 1.5, speed: 1, moves: 1.8, pass: 1.4 },
 };
 
 const SPOTS = [
@@ -12,6 +12,8 @@ const SPOTS = [
   { x: -6.4, z: 1.2 }, { x: 6.4, z: 1.2 }, { x: -2.2, z: 5.2 },
   { x: 2.2, z: 5.2 }, { x: 0, z: 5.6 }, { x: -3.4, z: 3.0 }, { x: 3.4, z: 3.0 },
 ];
+
+const dist = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
 
 export class Bot {
   constructor(match, id, level = 'medium') {
@@ -25,14 +27,13 @@ export class Bot {
     this.shootT = 0;
     this.jumpAt = -1;
     this.t = 0;
-    this.decideT = 0;
+    this.passAt = -1;
   }
 
   update(dt) {
     const m = this.m;
     const me = m.get(this.id);
-    if (!me) return;
-    const o = m.opp(me);
+    if (!me || !me.bot) return;
     this.t += dt;
     const inp = { mx: 0, mz: 0, sprint: false };
 
@@ -45,13 +46,16 @@ export class Bot {
     if (m.phase !== 'play' || me.st !== 'free') {
       m.onInput(this.id, inp);
       this.spot = null;
+      this.passAt = -1;
       return;
     }
 
     const b = m.ball;
-    if (b.holder === me.id) this.offense(me, o, inp, dt);
-    else if (b.holder && o && b.holder === o.id) this.defense(me, o, inp, dt);
-    else this.chase(me, o, inp);
+    const holder = m.holder();
+    if (holder === me) this.offenseBall(me, inp, dt);
+    else if (holder && holder.team === me.team) this.offenseOff(me, holder, inp, dt);
+    else if (holder) this.defense(me, holder, inp, dt);
+    else this.loose(me, inp, b);
 
     const s = this.cfg.speed;
     inp.mx *= s; inp.mz *= s;
@@ -65,10 +69,42 @@ export class Bot {
     return d;
   }
 
-  offense(me, o, inp, dt) {
+  nearestOpp(me, to = me) {
+    let best = null, bd = 99;
+    for (const o of this.m.opps(me)) { const d = dist(o, to); if (d < bd) { bd = d; best = o; } }
+    return { o: best, d: bd };
+  }
+
+  mark(me) {
+    const mine = this.m.team(me.team);
+    const opps = this.m.opps(me);
+    return opps[mine.indexOf(me) % opps.length];
+  }
+
+  // ------------------------------------------------ Angriff mit Ball
+  offenseBall(me, inp, dt) {
     const m = this.m;
+    const mate = m.mates(me)[0];
+    const { o, d: dO } = this.nearestOpp(me);
+    const mateOpen = mate && this.nearestOpp(me, mate).d > 2.2;
+
+    // Pass: Mitspieler fordert oder ist frei, während ich gedeckt bin
+    if (mate) {
+      const called = m.time - (m.calls[mate.id] ?? -9) < 1.5;
+      if (this.passAt < 0 && (called || (mateOpen && dO < 1.5 && Math.random() < dt * this.cfg.pass) ||
+          (!m.cleared && mateOpen && hoopDist(mate.x, mate.z) > THREE_R + 0.3 && Math.random() < dt * 2))) {
+        this.passAt = this.t + this.cfg.react;
+      }
+      if (this.passAt > 0 && this.t >= this.passAt) {
+        this.passAt = -1;
+        this.spot = null;
+        m.onPass(this.id);
+        return;
+      }
+    }
+
     this.spotT -= dt;
-    if (!me.cleared) {
+    if (!m.cleared) {
       const a = Math.atan2(me.x - HOOP.x, me.z - HOOP.z);
       const R = THREE_R + 0.9;
       this.moveTo(me, inp, HOOP.x + Math.sin(a) * R, Math.min(13, HOOP.z + Math.cos(a) * R + 0.5), true);
@@ -79,33 +115,32 @@ export class Bot {
       this.spot = this.drive ? { x: (Math.random() - 0.5) * 1.2, z: HOOP.z + 1.2 } : SPOTS[Math.floor(Math.random() * SPOTS.length)];
       this.spotT = 2 + Math.random() * 2.5;
     }
-    const dO = o ? Math.hypot(o.x - me.x, o.z - me.z) : 99;
     const hd = hoopDist(me.x, me.z);
+
+    // Dribble-Moves gegen einen Verteidiger vor mir
+    if (o && dO < 1.8 && me.moveCd <= 0 && Math.random() < dt * this.cfg.moves) {
+      const { rx, rz } = attackAxes(me.x, me.z);
+      const lv = o.vx * rx + o.vz * rz;
+      const r = Math.random();
+      if (r < 0.25) m.onSwitch(this.id);
+      else {
+        // gegen die Laufrichtung des Verteidigers
+        const side = lv > 0.8 ? -1 : lv < -0.8 ? 1 : (Math.random() < 0.5 ? 1 : -1);
+        m.onDribble(this.id, side);
+      }
+      return;
+    }
 
     if (this.drive) {
       this.moveTo(me, inp, this.spot.x, this.spot.z, true);
-      if (hd < 2.5 && me.sprinting && Math.hypot(me.vx, me.vz) > 4.3) {
-        m.onShootStart(this.id);
-        return;
-      }
+      if (hd < 2.5 && me.sprinting && Math.hypot(me.vx, me.vz) > 4.3) { m.onShootStart(this.id); return; }
       if (hd < 1.6) this.startShot();
-      if (o && dO < 1.6 && me.dashCd <= 0 && Math.random() < dt * 1.5) {
-        const side = Math.random() < 0.5 ? 1 : -1;
-        m.onMove(this.id, -inp.mz * side, inp.mx * side);
-      }
       return;
     }
 
     const d = this.moveTo(me, inp, this.spot.x, this.spot.z, false);
     const open = dO > this.cfg.shootOpen;
-    const late = m.shotClock < 3.5;
-    if ((d < 0.6 && (open || Math.random() < dt * 0.5)) || late) {
-      this.startShot();
-    } else if (o && dO < 1.5 && me.dashCd <= 0 && Math.random() < dt * 0.8) {
-      const side = Math.random() < 0.5 ? 1 : -1;
-      const ax = HOOP.x - me.x, az = HOOP.z - me.z, al = Math.hypot(ax, az) || 1;
-      m.onMove(this.id, (ax / al) * 0.5 - (az / al) * side, (az / al) * 0.5 + (ax / al) * side);
-    }
+    if ((d < 0.6 && (open || Math.random() < dt * 0.5)) || m.shotClock < 3.5) this.startShot();
   }
 
   startShot() {
@@ -119,30 +154,59 @@ export class Bot {
     }
   }
 
-  defense(me, o, inp, dt) {
+  // ------------------------------------------------ Angriff ohne Ball (2v2)
+  offenseOff(me, holder, inp, dt) {
+    this.spotT -= dt;
+    const myDef = this.nearestOpp(me).d;
+    if (!this.spot || this.spotT <= 0 || dist(this.spot, holder) < 3) {
+      if (myDef > 2.5 && Math.random() < 0.3) {
+        this.spot = { x: (Math.random() - 0.5) * 2, z: HOOP.z + 1.5 }; // Cut zum Korb
+      } else {
+        const cands = SPOTS.filter((s) => dist(s, holder) > 3.5).sort((a, b) => dist(b, holder) - dist(a, holder));
+        this.spot = cands[Math.floor(Math.random() * Math.min(3, cands.length))] || SPOTS[0];
+      }
+      this.spotT = 2 + Math.random() * 2;
+    }
+    this.moveTo(me, inp, this.spot.x, this.spot.z, dist(me, this.spot) > 3);
+  }
+
+  // ------------------------------------------------ Verteidigung
+  defense(me, holder, inp, dt) {
     const m = this.m;
-    const hx = HOOP.x - o.x, hz = HOOP.z - o.z, hl = Math.hypot(hx, hz) || 1;
-    const gap = o.cleared ? 1.3 : 2.2;
-    const tx = o.x + (hx / hl) * gap, tz = o.z + (hz / hl) * gap;
+    const mark = this.mark(me) || holder;
+    const guardBall = mark === holder;
+    const hx = HOOP.x - mark.x, hz = HOOP.z - mark.z, hl = Math.hypot(hx, hz) || 1;
+    let tx, tz;
+    if (guardBall) {
+      const gap = m.cleared ? 1.3 : 2.2;
+      tx = mark.x + (hx / hl) * gap; tz = mark.z + (hz / hl) * gap;
+    } else {
+      // zwischen Gegenspieler und Korb, etwas Richtung Ball (Help-Defense)
+      tx = mark.x + (hx / hl) * 1.5 + (holder.x - mark.x) * 0.2;
+      tz = mark.z + (hz / hl) * 1.5 + (holder.z - mark.z) * 0.2;
+    }
     const d = this.moveTo(me, inp, tx, tz, true);
     if (d < 0.3) { inp.mx = 0; inp.mz = 0; }
-    me.f = Math.atan2(o.x - me.x, o.z - me.z);
 
-    const dO = Math.hypot(o.x - me.x, o.z - me.z);
-    if ((o.st === 'shoot' || o.st === 'dunk') && dO < 2.2) {
+    const dH = dist(holder, me);
+    if ((holder.st === 'shoot' || holder.st === 'dunk') && dH < 2.2) {
       if (this.jumpAt < 0) this.jumpAt = this.t + this.cfg.react * (0.6 + Math.random() * 0.8);
-    } else if (o.st === 'free') this.jumpAt = -1;
+    } else if (holder.st === 'free') this.jumpAt = -1;
     if (this.jumpAt > 0 && this.t >= this.jumpAt) {
       m.onShootStart(this.id);
       this.jumpAt = -1e9;
     }
-    if (dO < 1.3 && me.stealCd <= 0 && Math.random() < dt * this.cfg.steal) m.onSteal(this.id);
+    if (dH < 1.3 && me.stealCd <= 0 && Math.random() < dt * this.cfg.steal) m.onSteal(this.id);
   }
 
-  chase(me, o, inp) {
-    const b = this.m.ball;
-    // Grobe Vorhersage des Balls
+  loose(me, inp, b) {
+    const mates = this.m.team(me.team);
     const tx = b.x + b.vx * 0.25, tz = b.z + b.vz * 0.25;
+    const closest = mates.reduce((a, q) => (dist(q, { x: tx, z: tz }) < dist(a, { x: tx, z: tz }) ? q : a), me);
+    if (closest !== me && !b.pass) {
+      this.moveTo(me, inp, HOOP.x + (me.x > 0 ? 2.5 : -2.5), HOOP.z + 3.5, false);
+      return;
+    }
     const d = this.moveTo(me, inp, tx, tz, true);
     if (d < 1.0 && b.y > 2.2 && b.y < 3.3 && b.vy < 0) this.m.onShootStart(this.id);
   }
