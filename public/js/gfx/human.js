@@ -28,11 +28,14 @@ function loadImageData(url) {
 export function loadHumanAssets() {
   if (!assetsPromise) {
     assetsPromise = (async () => {
-      const [bin, mask, maskB, pos, eyeTex] = await Promise.all([
+      const [bin, mask, maskB, pos, fMask, fMaskB, fPos, eyeTex] = await Promise.all([
         fetch(ASSET + 'char.bin').then((r) => r.arrayBuffer()),
         loadImageData(ASSET + 'skin_a.png'),
         loadImageData(ASSET + 'skin_b.png'),
         loadImageData(ASSET + 'skin_pos.png'),
+        loadImageData(ASSET + 'face_a.png'),
+        loadImageData(ASSET + 'face_b.png'),
+        loadImageData(ASSET + 'face_pos.png'),
         new THREE.TextureLoader().loadAsync(ASSET + 'eye.png'),
       ]);
       const hl = new DataView(bin).getUint32(0, true);
@@ -40,7 +43,7 @@ export function loadHumanAssets() {
       const base = 4 + hl + ((4 - ((4 + hl) % 4)) % 4);
       const arr = (d) => new globalThis[d.t](bin, base + d.o, d.n);
       eyeTex.colorSpace = THREE.SRGBColorSpace;
-      assets = { header, arr, mask, maskB, pos, eyeTex, geoCache: new Map() };
+      assets = { header, arr, mask, maskB, pos, face: { mask: fMask, maskB: fMaskB, pos: fPos }, eyeTex, geoCache: new Map() };
       return assets;
     })();
   }
@@ -63,6 +66,7 @@ function blockGeometry(A, name, vi) {
   g.setAttribute('skinWeight', new THREE.BufferAttribute(A.arr(b.skinWeight), 4, true));
   const idx = A.arr(name === 'body' && !all ? b.visible : b.index);
   if (b.cut) g.setAttribute('cut', new THREE.BufferAttribute(A.arr(b.cut), 1));
+  if (b.faceUv) { g.setAttribute('faceUv', new THREE.BufferAttribute(A.arr(b.faceUv), 2)); g.setAttribute('faceW', new THREE.BufferAttribute(A.arr(b.faceW), 1)); }
   if (name === 'body' || name === 'lashes') {
     const m = exprMorphs(A, name, vi);
     if (m) { g.morphAttributes.position = m; g.morphTargetsRelative = true; }
@@ -71,6 +75,47 @@ function blockGeometry(A, name, vi) {
   g.computeBoundingSphere();
   A.geoCache.set(key, g);
   return g;
+}
+
+// Fell-Schalen: mehrere Lagen derselben Fläche; nach außen hin bleiben nur einzelne Strähnen stehen,
+// innere Lagen sind dunkler (Eigenschatten) → Haare/Bart wirken dicht und fusselig statt wie eine Haube
+const STRAND_GLSL = (D, aspect, sparse = 0.92) => `
+  float sCell = fract(sin(dot(floor(vMapUv * vec2(${D.toFixed(1)}, ${(D * aspect).toFixed(1)})), vec2(39.346, 11.135))) * 43758.5453);
+  if (vLay > 0.001) diffuseColor.a *= step(vLay * ${sparse.toFixed(2)}, pow(sCell, 0.7));
+  diffuseColor.rgb *= 0.55 + 0.45 * abs(vLay) + 0.15 * (sCell - 0.5);`;
+function layered(g, L, attrs, offsetFn) {
+  // g: Basis-Geometrie (Position = innerste Lage); offsetFn(i, lf) → Positionsversatz als Vector3
+  const n = g.attributes.position.count, idx = g.index.array;
+  const pos = new Float32Array(n * 3 * L), lay = new Float32Array(n * L), ix = new Uint32Array(idx.length * L);
+  const v = new THREE.Vector3();
+  for (let l = 0; l < L; l++) {
+    const lf = L > 1 ? l / (L - 1) : 1;
+    for (let i = 0; i < n; i++) {
+      v.fromBufferAttribute(g.attributes.position, i).add(offsetFn(i, lf));
+      pos.set([v.x, v.y, v.z], (l * n + i) * 3);
+      lay[l * n + i] = lf;
+    }
+    for (let k = 0; k < idx.length; k++) ix[l * idx.length + k] = idx[k] + l * n;
+  }
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  out.setAttribute('hlay', new THREE.BufferAttribute(lay, 1));
+  for (const a of attrs) {
+    const src = g.attributes[a], arr = new src.array.constructor(src.array.length * L);
+    for (let l = 0; l < L; l++) arr.set(src.array, l * src.array.length);
+    out.setAttribute(a, new THREE.BufferAttribute(arr, src.itemSize));
+  }
+  if (g.morphAttributes.position) {
+    out.morphAttributes.position = g.morphAttributes.position.map((m) => {
+      const arr = new Float32Array(m.array.length * L);
+      for (let l = 0; l < L; l++) arr.set(m.array, l * m.array.length);
+      const a = new THREE.BufferAttribute(arr, 3); a.name = m.name; return a;
+    });
+    out.morphTargetsRelative = true;
+  }
+  out.setIndex(new THREE.BufferAttribute(ix, 1));
+  out.computeVertexNormals();
+  return out;
 }
 
 // Mimik-Deltas (MPFB-Einheiten, je Herkunft gemischt) als Morph-Targets für einen Block
@@ -170,15 +215,16 @@ const SKIN = {
 const VARIANT_SKIN = { m_af: 'african', m_ca: 'caucasian', m_as: 'asian', m_mx: 'mixed', m_big: 'african', f_af: 'african', f_ca: 'caucasian', m_king: 'african' };
 
 function composeSkin(A, o) {
-  const step = o.step || 1, SW = A.mask.width;
-  const W = SW / step, H = A.mask.height / step;
+  const IM = o.imgs || A;
+  const step = o.step || 1, SW = IM.mask.width;
+  const W = SW / step, H = IM.mask.height / step;
   const c = document.createElement('canvas');
   c.width = W; c.height = H;
   const g = c.getContext('2d');
   const img = g.createImageData(W, H);
   const rc = document.createElement('canvas'); rc.width = W; rc.height = H;
   const rg = rc.getContext('2d'), rimg = rg.createImageData(W, H), rd = rimg.data;
-  const d = img.data, m = A.mask.data, mb = A.maskB.data, p = A.pos.data;
+  const d = img.data, m = IM.mask.data, mb = IM.maskB.data, p = IM.pos.data;
   const bb = A.header.bbox;
   const sk = rgb(o.skin), lip = rgb(o.lip), hair = rgb(o.hair);
   const sock = rgb(o.sock), sockStripe = rgb(o.sockStripe), dark = rgb('#121418');
@@ -222,7 +268,12 @@ function composeSkin(A, o) {
       const t = lips * 0.92; r += (lip.r * (0.7 + 0.3 * ao) - r) * t; gg += (lip.g * (0.7 + 0.3 * ao) - gg) * t; b += (lip.b * (0.7 + 0.3 * ao) - b) * t;
     }
     // Bartschatten
-    if (stub > 0 && o.stubble > 0) { const t = stub * o.stubble * (0.75 + nn * 0.5); r += (hair.r * 0.6 - r) * t; gg += (hair.g * 0.6 - gg) * t; b += (hair.b * 0.6 - b) * t; }
+    if (stub > 0 && o.stubble > 0) {
+      // Bartschatten aus einzelnen Stoppeln (Punkte) über einem zarten Grauschleier
+      const dot = nz(px * 3 + (py >> 1), py * 5 + (px >> 2)) > 1 - stub * 0.75 ? 1 : 0;
+      const t = stub * o.stubble * (0.35 + 0.9 * dot);
+      r += (hair.r * 0.7 - r) * t; gg += (hair.g * 0.7 - gg) * t; b += (hair.b * 0.7 - b) * t;
+    }
     // Augenbrauen (mit Haar-Struktur)
     if (brow > 0) {
       const strands = nz(px >> 1, py) * 0.6 + nz(px >> 2, py >> 1) * 0.4;       // feine, waagrechte Härchen
@@ -594,7 +645,7 @@ export class PlayerView {
     this.isKing = isKing;
     const painted = ['buzz', 'fade', 'waves'].includes(style) ? style : style === 'cap' ? 'buzz' : ['dreads', 'twists', 'afro', 'cornrows', 'bun'].includes(style) ? 'buzz' : style === 'hightop' ? 'fade' : null;
     const sockHex = rnd() < 0.55 ? '#f2f2f2' : '#15171c';
-    const skinTex = composeSkin(A, {
+    const skinOpts = {
       seed, skin: skinHex, lip: shade(skinHex, ethn === 'african' ? 0.72 : 0.86).replace('#', '#'), hair: hairHex, painted,
       stubble: beard === 'stubble' ? 0.32 : beard === 'beard' || beard === 'goatee' ? 0.25 : 0,
       sock: sockHex, sockStripe: rnd() < 0.5 ? info.color : (sockHex === '#f2f2f2' ? '#15171c' : '#f2f2f2'),
@@ -614,7 +665,10 @@ export class PlayerView {
           pantsC: rgb(pants), seamC: rgb(shade(pants, 1.35)), jeans, pantsLen: rnd() < 0.2 ? 'shorts' : 'long',
         };
       })() : null,
-    });
+    };
+    const skinTex = composeSkin(A, skinOpts);
+    // Gesicht/Kopf in eigener, ~3× feinerer Textur (gleiche Malregeln → nahtlos überblendet)
+    const faceTex = composeSkin(A, { ...skinOpts, imgs: A.face });
     const skinMat = new THREE.MeshPhysicalMaterial({
       map: skinTex, roughnessMap: skinTex.userData.rough, roughness: 1, sheen: 0.35, sheenRoughness: 0.6,
       sheenColor: new THREE.Color(skinHex).lerp(new THREE.Color(0xff9f80), 0.45),
@@ -622,6 +676,17 @@ export class PlayerView {
       // warmes Streulicht (Fake-Subsurface): hebt Schatten rötlich an statt grau
       emissive: new THREE.Color(0xff8a6a), emissiveMap: skinTex, emissiveIntensity: 0.08,
     });
+    skinMat.customProgramCacheKey = () => 'skinFace';
+    skinMat.onBeforeCompile = (sh) => {
+      sh.uniforms.faceMap = { value: faceTex };
+      sh.uniforms.faceRough = { value: faceTex.userData.rough };
+      sh.vertexShader = 'attribute vec2 faceUv;\nattribute float faceW;\nvarying vec2 vFaceUv;\nvarying float vFaceW;\n' +
+        sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n  vFaceUv = faceUv; vFaceW = faceW;');
+      sh.fragmentShader = 'uniform sampler2D faceMap;\nuniform sampler2D faceRough;\nvarying vec2 vFaceUv;\nvarying float vFaceW;\n' + sh.fragmentShader
+        .replace('#include <map_fragment>', '#include <map_fragment>\n  vec3 faceCol = texture2D(faceMap, vFaceUv).rgb;\n  diffuseColor.rgb = mix(diffuseColor.rgb, faceCol * diffuse, vFaceW);')
+        .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\n  roughnessFactor = mix(roughnessFactor, roughness * texture2D(faceRough, vFaceUv).g, vFaceW);')
+        .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n  totalEmissiveRadiance = mix(totalEmissiveRadiance, emissive * faceCol, vFaceW);');
+    };
     const number = look ? String(look.num) : isKing ? '1' : String((seed % 98) + 1);
     const jerseyMat = crowd ? null : new THREE.MeshPhysicalMaterial({
       map: jerseyTexture(info.color, number, info.name, WORDMARKS[hash(info.color) % WORDMARKS.length]),
@@ -813,37 +878,42 @@ export class PlayerView {
     const tex = hairTexture(hairHex, kind);
     // Haaransatz pro Pixel aus dem interpolierten Abstand zur Haarlinie (dm) → scharfe Kante auch bei großen Dreiecken
     const short = ['buzz', 'fade', 'waves', 'hightop'].includes(style);
+    const strandD = style === 'afro' || style === 'twists' ? 70 : style === 'cornrows' ? 160 : 260;
     const ha = { afro: [-0.03, 0.03, 1], hightop: [0.25, 0.55, 0.85], fade: [0.25, 0.55, 0.85], buzz: [-0.05, 0.12, 0.85], waves: [-0.05, 0.12, 0.85] }[style] || [-0.04, 0.04, 1];
     // Physikalisch mit Sheen: dunkles Haar bekommt einen weichen, faserigen Glanz statt schwarzer Fläche
     const mat = new THREE.MeshPhysicalMaterial({
-      map: tex.map, bumpMap: tex.bump, bumpScale: 3, roughness: 0.72, transparent: short, alphaTest: short ? 0.02 : 0.5,
+      map: tex.map, bumpMap: tex.bump, bumpScale: 3, roughness: 0.72, alphaTest: 0.5,
       sheen: 1, sheenRoughness: 0.55, sheenColor: new THREE.Color(hairHex).lerp(new THREE.Color(0xa89080), 0.45), specularIntensity: 0.6,
     });
     mat.customProgramCacheKey = () => 'hairline';
     mat.onBeforeCompile = (sh) => {
       sh.uniforms.hA = { value: new THREE.Vector3(...ha) };
-      sh.vertexShader = 'attribute float hl;\nvarying float vHl;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n  vHl = hl;');
-      sh.fragmentShader = 'uniform vec3 hA;\nvarying float vHl;\n' + sh.fragmentShader.replace('#include <alphatest_fragment>', '  float hn = fract(sin(dot(floor(vMapUv * 700.0), vec2(12.9898, 78.233))) * 43758.5453);\n  diffuseColor.a *= smoothstep(hA.x, hA.y, vHl + (hn - 0.5) * 0.06) * hA.z;\n#include <alphatest_fragment>');
+      sh.vertexShader = 'attribute float hl;\nattribute float hlay;\nvarying float vHl;\nvarying float vLay;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n  vHl = hl; vLay = hlay;');
+      sh.fragmentShader = 'uniform vec3 hA;\nvarying float vHl;\nvarying float vLay;\n' + sh.fragmentShader.replace('#include <alphatest_fragment>', '  float hn = fract(sin(dot(floor(vMapUv * 700.0), vec2(12.9898, 78.233))) * 43758.5453);\n  diffuseColor.a *= smoothstep(hA.x, hA.y, vHl + (hn - 0.5) * 0.06 - vLay * 0.05) * (hA.z < 1.0 ? 1.0 : 1.0);' + STRAND_GLSL(strandD, style === 'afro' || style === 'twists' ? 1 : 0.3, style === 'afro' ? 0.62 : 0.92) + '\n#include <alphatest_fragment>');
     };
     const P = (i) => new THREE.Vector3(p16[i * 3] / 13000, p16[i * 3 + 1] / 13000, p16[i * 3 + 2] / 13000);
     const N = (i) => new THREE.Vector3(n8[i * 3] / 127, n8[i * 3 + 1] / 127, n8[i * 3 + 2] / 127).normalize();
     let top = -Infinity; for (let i = 0; i < n; i++) top = Math.max(top, P(i).y);
-    const shell = (offsetFn) => {
-      const pos = new Float32Array(n * 3);
+    // L Lagen von knapp über der Kopfhaut (inner) bis zur Außenform
+    const shell = (offsetFn, L = 4, inner = 0.001) => {
+      const pos = new Float32Array(n * 3), outer = [];
       for (let i = 0; i < n; i++) {
         const p = P(i), nn = N(i);
         const o = offsetFn(i, p, nn);
-        p.addScaledVector(nn, o.n || 0);
-        if (o.up) p.y += o.up;
-        p.sub(headRest);
-        pos.set([p.x, p.y, p.z], i * 3);
+        const q = p.clone().addScaledVector(nn, o.n || 0);
+        if (o.up) q.y += o.up;
+        const b = p.clone().addScaledVector(nn, Math.min(inner, o.n || 0));
+        outer.push(q.sub(b));
+        b.sub(headRest);
+        pos.set([b.x, b.y, b.z], i * 3);
       }
-      const g = new THREE.BufferGeometry();
-      g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-      g.setAttribute('uv', new THREE.BufferAttribute(Float32Array.from(uvA, (v, k) => v * 3), 2));
-      g.setAttribute('hl', new THREE.BufferAttribute(line, 1));
-      g.setIndex(new THREE.BufferAttribute(Uint16Array.from(idx), 1));
-      g.computeVertexNormals();
+      const g0 = new THREE.BufferGeometry();
+      g0.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      g0.setAttribute('uv', new THREE.BufferAttribute(Float32Array.from(uvA, (v, k) => v * 3), 2));
+      g0.setAttribute('hl', new THREE.BufferAttribute(line, 1));
+      g0.setIndex(new THREE.BufferAttribute(Uint16Array.from(idx), 1));
+      const tv = new THREE.Vector3();
+      const g = layered(g0, L, ['uv', 'hl'], (i, lf) => tv.copy(outer[i]).multiplyScalar(lf));
       const m = new THREE.Mesh(g, mat);
       m.castShadow = true;
       this.head.add(m);
@@ -860,7 +930,7 @@ export class PlayerView {
         const reach = Math.max(0, (1 - q) * d.length() / Math.max(q, 0.3));      // Abstand bis zur Hülle (radial)
         const taper = 0.1 + 0.9 * s(C.y - 0.17, C.y + 0.03, p.y);                // unten zum Nacken hin anliegend
         return { n: 0.0015 + g * reach * taper * (1 + (rnd() - 0.5) * 0.05) };
-      });
+      }, 9);
     } else if (style === 'hightop') {
       shell(() => ({ n: 0.0025 }));
       // Block: gedrehtes Profil mit abgerundeter Oberkante, steckt unten im Schädel
@@ -873,36 +943,32 @@ export class PlayerView {
       const bm = new THREE.MeshPhysicalMaterial({ map: tex.map, bumpMap: tex.bump, bumpScale: 3, roughness: 0.72, sheen: 1, sheenRoughness: 0.55, sheenColor: mat.sheenColor });
       const m = new THREE.Mesh(g, bm); m.castShadow = true; this.head.add(m);
     } else if (['dreads', 'twists', 'cornrows', 'bun', 'buzz', 'waves', 'fade'].includes(style)) {
-      shell(() => ({ n: style === 'cornrows' ? 0.003 : style === 'bun' ? 0.004 : 0.0025 }));
+      shell(() => ({ n: style === 'cornrows' ? 0.0045 : style === 'bun' ? 0.006 : style === 'buzz' || style === 'fade' || style === 'waves' ? 0.0045 : 0.004 }), 4, 0.0008);
       const extra = [];
       if (style === 'dreads' || style === 'twists') {
         let dz = 0; for (let i = 0; i < n; i++) dz += P(i).z / n;
         const dC = new THREE.Vector3(0, top - 0.1, dz);
-        for (let i = 0; i < n; i += style === 'dreads' ? 6 : 5) {
+        for (let i = 0; i < n; i += style === 'dreads' ? 6 : 3) {
           if (line[i] < 0.08) continue;
           const p = P(i), nn = N(i);
-          if (style === 'dreads') {
+          {
             // Strähne fällt unter Schwerkraft, legt sich um den Schädel und bleibt aus dem Gesicht
-            const len = 0.2 + rnd() * 0.14, seg = 0.016;
-            let q = p.clone().addScaledVector(nn, 0.005);
-            const minR = q.distanceTo(dC) + 0.004;
+            // (Twists: kurz und dicht am Kopf, Dreads: lang)
+            const tw = style === 'twists';
+            const len = tw ? 0.045 + rnd() * 0.03 : 0.2 + rnd() * 0.14, seg = tw ? 0.009 : 0.016;
+            let q = p.clone().addScaledVector(nn, tw ? 0.004 : 0.005);
+            const minR = q.distanceTo(dC) + (tw ? 0.001 : 0.004);
             const pts = [q.clone()];
             const v = nn.clone().multiplyScalar(0.4).add(new THREE.Vector3(q.x * 3, 0, -0.9)).normalize();
             for (let d = 0; d < len; d += seg) {
-              v.y -= 0.32; v.x += (rnd() - 0.5) * 0.08; v.normalize();
+              v.y -= tw ? 0.12 : 0.32; v.x += (rnd() - 0.5) * 0.08; v.normalize();
               q = q.clone().addScaledVector(v, seg);
               const r = q.distanceTo(dC);
               if (r < minR && q.y > dC.y - 0.14) q.sub(dC).multiplyScalar(minR / r).add(dC);
               if (q.y < top - 0.07 && q.z > dC.z + 0.015 && Math.abs(q.x) < 0.085) q.z = dC.z + 0.015;
               pts.push(q);
             }
-            extra.push(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts.map((x) => x.sub(headRest))), pts.length * 2, 0.0072, 5, false));
-          } else {
-            // Twist liegt am Kopf an und fällt nach hinten-unten (Richtung = Tangente)
-            const g = new THREE.CapsuleGeometry(0.0075, 0.03, 3, 6);
-            const tdir = new THREE.Vector3(0, -1, -0.35).addScaledVector(nn, -new THREE.Vector3(0, -1, -0.35).dot(nn)).normalize();
-            const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), tdir);
-            extra.push(g.applyMatrix4(new THREE.Matrix4().compose(p.addScaledVector(nn, 0.008).addScaledVector(tdir, 0.012).sub(headRest), q, new THREE.Vector3(1, 1, 1))));
+            extra.push(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts.map((x) => x.sub(headRest))), pts.length * 2, tw ? 0.0056 : 0.0072, 5, false));
           }
         }
       }
@@ -914,6 +980,7 @@ export class PlayerView {
       if (extra.length) {
         const g = merge(extra);
         g.setAttribute('hl', new THREE.BufferAttribute(new Float32Array(g.attributes.position.count).fill(10), 1));
+        g.setAttribute('hlay', new THREE.BufferAttribute(new Float32Array(g.attributes.position.count).fill(-1), 1));   // massiv, nicht ausdünnen
         const m = new THREE.Mesh(g, mat);
         m.castShadow = true;
         this.head.add(m);
@@ -986,23 +1053,27 @@ export class PlayerView {
       const bp = A.arr(bv.pos), bn = A.arr(bv.nrm), bu = A.arr(bb.uv);
       const cnt = bb.count;
       const btex = hairTexture(hairHex, 'coil');
-      const bmat = new THREE.MeshStandardMaterial({ map: btex.map, bumpMap: btex.bump, bumpScale: 3, roughness: 0.9, vertexColors: true, alphaTest: 0.5 });
+      const bmat = new THREE.MeshPhysicalMaterial({ map: btex.map, bumpMap: btex.bump, bumpScale: 3, roughness: 0.8, vertexColors: true, alphaTest: 0.5,
+        sheen: 0.8, sheenRoughness: 0.6, sheenColor: new THREE.Color(hairHex).lerp(new THREE.Color(0xa89080), 0.4) });
       // Bartrand pro Pixel ausfransen (sonst sieht man die Dreieckskanten als Sägezahn)
       bmat.customProgramCacheKey = () => 'beardEdge';
       bmat.onBeforeCompile = (sh) => {
-        sh.fragmentShader = sh.fragmentShader.replace('#include <alphatest_fragment>',
-          '  float bn = fract(sin(dot(floor(vMapUv * 900.0), vec2(12.9898, 78.233))) * 43758.5453);\n  diffuseColor.a = smoothstep(0.3, 0.7, diffuseColor.a + (bn - 0.5) * 0.55);\n#include <alphatest_fragment>');
+        sh.vertexShader = 'attribute float hlay;\nvarying float vLay;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n  vLay = hlay;');
+        sh.fragmentShader = 'varying float vLay;\n' + sh.fragmentShader.replace('#include <alphatest_fragment>',
+          '  float bn = fract(sin(dot(floor(vMapUv * 900.0), vec2(12.9898, 78.233))) * 43758.5453);\n  diffuseColor.a = smoothstep(0.3, 0.7, diffuseColor.a + (bn - 0.5) * 0.55 - vLay * 0.15);' + STRAND_GLSL(110, 0.5) + '\n#include <alphatest_fragment>');
       };
       let minY = Infinity, maxY = -Infinity;
       for (let i = 0; i < cnt; i++) { minY = Math.min(minY, bp[i * 3 + 1]); maxY = Math.max(maxY, bp[i * 3 + 1]); }
-      const pos = new Float32Array(cnt * 3), colA = new Float32Array(cnt * 4);
+      const pos = new Float32Array(cnt * 3), colA = new Float32Array(cnt * 4), bOut = [];
       for (let i = 0; i < cnt; i++) {
         const p = new THREE.Vector3(bp[i * 3] / 13000, bp[i * 3 + 1] / 13000, bp[i * 3 + 2] / 13000);
         const nn = new THREE.Vector3(bn[i * 3] / 127, bn[i * 3 + 1] / 127, bn[i * 3 + 2] / 127).normalize();
         const hy = (bp[i * 3 + 1] - minY) / (maxY - minY || 1);
         let a = 1 - s(0.72, 0.98, hy);
         if (beard === 'goatee') a *= 1 - s(0.035, 0.06, Math.abs(p.x));
-        p.addScaledVector(nn, 0.004 + 0.006 * (1 - hy));
+        const th = (0.004 + 0.007 * (1 - hy)) * (beard === 'goatee' ? 0.8 : 1);
+        bOut.push(nn.clone().multiplyScalar(th - 0.0008));
+        p.addScaledVector(nn, 0.0008);
         p.sub(headRest);
         pos.set([p.x, p.y, p.z], i * 3);
         colA.set([1, 1, 1, a], i * 4);
@@ -1012,10 +1083,11 @@ export class PlayerView {
       g.setAttribute('uv', new THREE.BufferAttribute(Float32Array.from(bu, (v) => v * 4), 2));
       g.setAttribute('color', new THREE.BufferAttribute(colA, 4));
       g.setIndex(new THREE.BufferAttribute(Uint16Array.from(A.arr(bb.index)), 1));
-      g.computeVertexNormals();
       const bm = exprMorphs(A, 'beard', vi);
       if (bm) { g.morphAttributes.position = bm; g.morphTargetsRelative = true; }
-      const beardMesh = new THREE.Mesh(g, bmat);
+      const tv = new THREE.Vector3();
+      const beardMesh = new THREE.Mesh(layered(g, 5, ['uv', 'color'], (i, lf) => tv.copy(bOut[i]).multiplyScalar(lf)), bmat);
+      beardMesh.castShadow = true;
       this.head.add(beardMesh);
       this.faceMeshes.push(beardMesh);
       this.applyShape(beardMesh);

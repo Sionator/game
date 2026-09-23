@@ -589,10 +589,12 @@ for (const v of used) {
 log('AO berechnet');
 
 // ------------------------------------------------------------------ Masken in UV backen
-const TEX = 1024;
+let TEX = 1024;
+function rasterizeAt(size, blk, shade, channels, vattr) { const t = TEX; TEX = size; try { return rasterize(blk, shade, channels, vattr); } finally { TEX = t; } }
 function rasterize(blk, shade, channels = 4, vattr = null) {
   const img = new Float32Array(TEX * TEX * channels);
   const cov = new Uint8Array(TEX * TEX);
+  const zb = blk.depth ? new Float32Array(TEX * TEX).fill(-Infinity) : null;   // äußerste Fläche gewinnt
   const idx = blk.index;
   for (let i = 0; i < idx.length; i += 3) {
     const a = idx[i], b = idx[i + 1], c = idx[i + 2];
@@ -609,6 +611,11 @@ function rasterize(blk, shade, channels = 4, vattr = null) {
         const w1 = ((P[2][1] - P[0][1]) * (px - P[2][0]) + (P[0][0] - P[2][0]) * (py - P[2][1])) / den;
         const w2 = 1 - w0 - w1;
         if (w0 < -0.02 || w1 < -0.02 || w2 < -0.02) continue;
+        if (zb) {
+          const z = blk.depth[a] * w0 + blk.depth[b] * w1 + blk.depth[c] * w2;
+          if (z <= zb[y * TEX + x]) continue;
+          zb[y * TEX + x] = z;
+        }
         const pos = [0, 1, 2].map((k) => B[O[0] * 3 + k] * w0 + B[O[1] * 3 + k] * w1 + B[O[2] * 3 + k] * w2);
         const ao = AO[O[0]] * w0 + AO[O[1]] * w1 + AO[O[2]] * w2;
         const val = shade(pos, ao, vattr ? vattr[O[0]] * w0 + vattr[O[1]] * w1 + vattr[O[2]] * w2 : 0);
@@ -618,6 +625,7 @@ function rasterize(blk, shade, channels = 4, vattr = null) {
       }
     }
   }
+  if (zb) blk.zbuf = zb;
   // Ränder erweitern (gegen Nähte)
   for (let pass = 0; pass < 6; pass++) {
     const next = cov.slice();
@@ -699,6 +707,70 @@ function writePNG(file, w, h, rgba) {
 writePNG(`${OUT}/skin_a.png`, TEX, TEX, pngA);
 writePNG(`${OUT}/skin_b.png`, TEX, TEX, pngB);
 writePNG(`${OUT}/skin_pos.png`, TEX, TEX, pngP);
+// ---- Hochauflösende Gesichtstextur: eigene UV (Zylinder um den Kopf, vorne gedehnt) nur für Kopf/Hals-Vertices.
+// fw = Überblendgewicht (1 = Gesichtstextur, 0 = normale Hauttextur), damit am Rand keine Naht entsteht.
+const FY0 = 5.75, FY1 = 8.75, FA = 2.3;
+const faceU = new Float32Array(body.orig.length * 2), faceW = new Float32Array(body.orig.length);
+body.orig.forEach((v, j) => {
+  const a = azim(bx(v), bz(v)), y = by(v);
+  const t = Math.sign(a) * Math.pow(Math.min(1, Math.abs(a) / FA), 0.8);
+  faceU[j * 2] = 0.5 + 0.5 * t;
+  faceU[j * 2 + 1] = 1 - (FY1 - y) / (FY1 - FY0);
+  const inside = Math.min(1, (FA - Math.abs(a)) / 0.35, (y - FY0) / 0.3, (FY1 - y) / 0.2);
+  faceW[j] = Math.max(0, Math.min(1, inside)) * (boneWeight(v, ARM_BONES) < 0.1 ? 1 : 0);
+});
+const faceTris = [];
+for (let i = 0; i < body.index.length; i += 3) {
+  const t = [body.index[i], body.index[i + 1], body.index[i + 2]];
+  if (t.some((j) => faceW[j] > 0)) faceTris.push(...t);
+}
+// Tiefe = Abstand von der Kopfachse: Innenflächen (Mundhöhle, Lidinnenseiten) überdecken die Haut nicht
+const faceDepth = Float32Array.from(body.orig, (v) => Math.hypot(bx(v), bz(v) - HC[2]) + Math.max(0, by(v) - 8.0));
+const faceBlk = { orig: body.orig, uv: faceU, index: faceTris, depth: faceDepth };
+const FTEX = 1024;
+const TEX0 = TEX;
+const fMask = rasterizeAt(FTEX, faceBlk, (p, ao) => [...faceMasks(p, ao), 0], 6);
+// verdeckte Vertices (liegen deutlich hinter der äußersten Fläche) bekommen die normale Hauttextur
+{
+  const zb = faceBlk.zbuf;
+  let hidden = 0;
+  body.orig.forEach((v, j) => {
+    if (!faceW[j]) return;
+    const x = Math.min(FTEX - 1, Math.max(0, Math.floor(faceU[j * 2] * FTEX))), y = Math.min(FTEX - 1, Math.max(0, Math.floor((1 - faceU[j * 2 + 1]) * FTEX)));
+    if (zb[y * FTEX + x] - faceDepth[j] > 0.06) { faceW[j] = 0; hidden++; }
+  });
+  log('Gesicht: verdeckte Vertices', hidden);
+}
+const fPos = rasterizeAt(FTEX, faceBlk, (p) => p.map((v, k) => (v - bb.min[k]) / (bb.max[k] - bb.min[k])), 3);
+// weiche Maskenränder (Bartschatten, Brauen): Box-Blur in Texturraum
+function blurChannel(img, size, ch, stride, r) {
+  const tmp = new Float32Array(size * size);
+  for (let pass = 0; pass < 2; pass++) {
+    for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+      let sum = 0, n = 0;
+      for (let k = -r; k <= r; k++) {
+        const xx = pass ? x : x + k, yy = pass ? y + k : y;
+        if (xx < 0 || yy < 0 || xx >= size || yy >= size) continue;
+        sum += img[(yy * size + xx) * stride + ch]; n++;
+      }
+      tmp[y * size + x] = sum / n;
+    }
+    for (let i = 0; i < size * size; i++) img[i * stride + ch] = tmp[i];
+  }
+}
+blurChannel(fMask, FTEX, 4, 6, 10);
+blurChannel(fMask, FTEX, 2, 6, 2);
+const fA = new Uint8Array(FTEX * FTEX * 4), fB = new Uint8Array(FTEX * FTEX * 4), fP = new Uint8Array(FTEX * FTEX * 4);
+for (let i = 0; i < FTEX * FTEX; i++) {
+  fA[i * 4] = c255(fMask[i * 6]); fA[i * 4 + 1] = c255(fMask[i * 6 + 1]); fA[i * 4 + 2] = c255(fMask[i * 6 + 2]);
+  fB[i * 4] = c255(fMask[i * 6 + 3]); fB[i * 4 + 1] = c255(fMask[i * 6 + 4]);
+  for (let k = 0; k < 3; k++) fP[i * 4 + k] = c255(fPos[i * 3 + k]);
+  fA[i * 4 + 3] = fB[i * 4 + 3] = fP[i * 4 + 3] = 255;
+}
+writePNG(`${OUT}/face_a.png`, FTEX, FTEX, fA);
+writePNG(`${OUT}/face_b.png`, FTEX, FTEX, fB);
+writePNG(`${OUT}/face_pos.png`, FTEX, FTEX, fP);
+log('Gesichtstextur', FTEX, 'px,', faceTris.length / 3, 'Dreiecke');
 for (const old of ['skin_mask.png']) if (fs.existsSync(`${OUT}/${old}`)) fs.unlinkSync(`${OUT}/${old}`);
 fs.copyFileSync(`${MH}/eyes/materials/brown_eye.png`, `${OUT}/eye.png`);
 log('Texturen geschrieben');
@@ -740,6 +812,8 @@ header.blocks.jersey.cut = push(Float32Array.from(jersey.basePos, jerseyFieldP))
 header.blocks.shorts.cut = push(Float32Array.from(shorts.basePos, shortsFieldP));
 const vis = visibleIndex(body);
 header.blocks.body.visible = push(Uint16Array.from(vis));
+header.blocks.body.faceUv = push(faceU);
+header.blocks.body.faceW = push(faceW);
 log('Körper sichtbar', vis.length / 3, 'von', body.index.length / 3, 'Dreiecken');
 for (const v of variants) {
   const vd = { id: v.id, gender: v.gender, height: v.height, scale: v.scale, race: v.race, joints: v.joints, tails: v.tails, eyes: v.eyes, blocks: {} };
