@@ -375,6 +375,7 @@ function shortsTexture(color) {
 const HAIR_COL = ['#1a1310', '#211710', '#2b1c13', '#3d2616', '#6b4a2a', '#b08850', '#5a2414'];
 const STYLES_M = ['buzz', 'fade', 'waves', 'afro', 'dreads', 'cornrows', 'twists', 'hightop', 'fade', 'buzz', 'bald'];
 const STYLES_F = ['bun', 'afro', 'cornrows', 'dreads', 'bun', 'twists', 'buzz'];
+const LEG_KEYS = new Set(['hipLx', 'hipRx', 'hipLz', 'hipRz', 'kneeL', 'kneeR', 'ankL', 'ankR', 'hipsY', 'pelvisX', 'pelvisY', 'pelvisZ']);
 const BONE = (A, name) => A.header.bones.findIndex((b) => b.name === name);
 
 export class PlayerView {
@@ -393,7 +394,7 @@ export class PlayerView {
     const col = new THREE.Color(info.color);
 
     this.runPhase = 0; this.dribblePhase = 0; this.lastBounce = 1; this.reachT = 0; this.celebrateT = 0;
-    this.followT = 0; this.landT = 0; this.wasShooting = false; this.wasAir = false; this.fallAmt = 0;
+    this.followT = 0; this.landT = 0; this.gaitPh = 0; this.shootT = 0; this.dunkT = 0; this.wasShooting = false; this.wasAir = false; this.fallAmt = 0;
     this.f = 0; this.time = Math.random() * 10;
     this.handX = -PLAYER.handX; this.crossMv = ''; this.q = {}; this.scaleK = 1;
     this._v = new THREE.Vector3(); this._q = new THREE.Quaternion(); this._e = new THREE.Euler();
@@ -600,6 +601,22 @@ export class PlayerView {
     bones.forEach((b, i) => b.quaternion.copy(corr[i]));
     for (const [i, q] of this.fingerRot) bones[i].quaternion.copy(q).multiply(corr[i]);
     this.root.updateMatrixWorld(true);
+    // Beinmaße für die IK (Körperraum, Ruhepose nach Korrektur)
+    {
+      const loc = (b) => this.body.worldToLocal(b.getWorldPosition(new THREE.Vector3()));
+      const hl = J('upperleg01.L'), hr = J('upperleg01.R'), aL = loc(this.legL.ankle), aR = loc(this.legR.ankle);
+      const Lt = hl.distanceTo(J('lowerleg01.L')), Ls = J('lowerleg01.L').distanceTo(J('foot.L'));
+      this.leg = {
+        Lt, Ls, hipY: hl.y, hipZ: (hl.z + hr.z) / 2, hipX: [hl.x, hr.x], ankY: (aL.y + aR.y) / 2,
+        restX: [aL.x, aR.x], restZ: (aL.z + aR.z) / 2,
+        restAbd: [Math.atan2(aL.x - hl.x, hl.y - aL.y), Math.atan2(aR.x - hr.x, hr.y - aR.y)],
+        rootX: 0, rootY: this.rootRestY, rootZ: this.B.root.position.z,
+      };
+      // Ruhe-Bein ist nicht ganz gestreckt → effektive Länge = Ruheabstand Hüfte–Knöchel
+      const restLen = Math.hypot(aL.x - hl.x, hl.y - aL.y, aL.z - hl.z);
+      const f = restLen / (Lt + Ls);
+      this.leg.Lt *= f; this.leg.Ls *= f;
+    }
 
     // --- Starre Teile am Kopf: Augen, Haare, Bart
     const headRest = J('head');
@@ -925,27 +942,38 @@ export class PlayerView {
     this.landT = Math.max(0, this.landT - dt);
     this.celebrateT = Math.max(0, this.celebrateT - dt);
 
-    // Laufzyklus
-    this.runPhase += dt * (3 + speed * 1.75);
-    const ph = this.runPhase;
-    const a = air ? 0 : Math.min(1, speed / 6.5);
-    // Seitwärts-Anteil (für Defense-Slides)
-    const fx = Math.sin(this.f), fz = Math.cos(this.f);
-    const fwdSpeed = (s.vx || 0) * fx + (s.vz || 0) * fz;
-    const sideSpeed = (s.vx || 0) * -fz + (s.vz || 0) * fx;
-
+    // ---------------- Grundhaltung, Gangzyklus und Zustände
+    const K = this.scaleK;
+    const cf = Math.cos(this.f), sf = Math.sin(this.f);
+    const lx = (s.vx || 0) * cf - (s.vz || 0) * sf;              // lokal: +x = links der Figur
+    const lz = (s.vx || 0) * sf + (s.vz || 0) * cf;              // lokal: +z = vorwärts
+    const spd = Math.hypot(lx, lz);
+    const onGround = !air && s.st !== 'dunk' && !stun;
+    const A = onGround ? Math.min(1, spd / 6.5) : 0;            // 0 = Stand, 1 = Sprint
+    const gA = onGround ? Math.min(1, spd / 1.4) : 0;            // Gang ein-/ausblenden
+    const back = lz < -0.5 ? Math.min(1, -lz / 3) : 0;           // Rückwärtslaufen
+    // Schrittlänge wächst mit dem Tempo → Füße bleiben beim Aufsetzen stehen (kein Rutschen)
+    const stride = s.defending ? 0.42 : 1;                     // Verteidigung: kurze, schnelle Schritte ohne Überkreuzen
+    if (onGround && spd > 0.1) this.gaitPh = (this.gaitPh + dt * spd / ((0.9 + spd * 0.28) * K * stride)) % 1;
+    this.runPhase = this.gaitPh * Math.PI * 2;
+    const swing = Math.sin(this.runPhase);                      // +1: linkes Bein vorn
+    const breath = Math.sin(t * 1.7);
     const T = {
-      hipLx: Math.sin(ph) * 0.95 * a, hipRx: -Math.sin(ph) * 0.95 * a,
-      hipLz: 0.03, hipRz: -0.03,
-      kneeL: -(0.12 + a * 1.25 * Math.max(0, Math.cos(ph))), kneeR: -(0.12 + a * 1.25 * Math.max(0, -Math.cos(ph))),
-      shLx: -Math.sin(ph) * 0.75 * a + 0.05, shRx: Math.sin(ph) * 0.75 * a + 0.05,
-      shLz: 0.1, shRz: -0.1,
-      elL: 0.25 + a * 1.1, elR: 0.25 + a * 1.1,
-      spineX: 0.04 + a * 0.22 * Math.sign(fwdSpeed || 1), spineY: Math.sin(ph) * 0.18 * a, spineZ: 0,
-      headX: -a * 0.12, headY: 0,
-      hipsY: -Math.abs(Math.cos(ph)) * 0.045 * a + Math.sin(t * 2.2) * 0.004,
-      handLx: 0, handRx: 0,
+      pelvisX: 0.1 * A * (1 - back), pelvisY: 0.12 * A * swing, pelvisZ: Math.sin(t * 0.45) * 0.03 * (1 - gA),   // Gewicht verlagern im Stand
+      hipLx: 0, hipRx: 0, hipLz: 0.03, hipRz: -0.03, kneeL: -0.1, kneeR: -0.1,
+      shLx: 0.05, shRx: 0.05, shLz: 0.1, shRz: -0.1, elL: 0.2, elR: 0.2, handLx: 0.05, handRx: 0.05,
+      spineX: 0.03 + breath * 0.012 + 0.2 * A * (1 - back) - 0.1 * back, spineY: -0.2 * A * swing, spineZ: 0,
+      headX: -0.02 - 0.1 * A, headY: 0,
+      hipsY: 0,
     };
+    // Armschwung gegengleich zu den Beinen, Ellbogen beim Laufen angewinkelt
+    const armAmp = (0.22 + 0.7 * A) * gA;
+    T.shLx += -armAmp * swing; T.shRx += armAmp * swing;
+    T.elL += gA * (0.45 + 0.75 * A + 0.3 * Math.max(0, -swing));
+    T.elR += gA * (0.45 + 0.75 * A + 0.3 * Math.max(0, swing));
+    T.shLz += 0.06 * gA; T.shRz -= 0.06 * gA;
+    // Parameter für die Bein-IK: Hocke, Spurbreite, Schritthöhe, Ausfallschritt
+    const G = { legs: onGround, crouch: 0.02 + 0.03 * A, width: 0.015, lift: 1, zL: 0, zR: 0, stride };
 
     // Ballhand und Handwechsel
     const hd = s.hd === -1 ? -1 : 1;
@@ -965,32 +993,26 @@ export class PlayerView {
       const guard = { x: 0.65, z: 0.5, el: 1.2 };
       if (crossing) { ballArm.x = 0.6; ballArm.z = 0.05; ballArm.el = 0.5; }
       if (hd === 1) {
-        T.shRx = ballArm.x; T.shRz = -ballArm.z; T.elR = ballArm.el; T.handRx = 0.4;
+        T.shRx = ballArm.x; T.shRz = -ballArm.z; T.elR = ballArm.el; T.handRx = 0.4 + push * 0.3;
         T.shLx = guard.x; T.shLz = guard.z; T.elL = guard.el;
       } else {
-        T.shLx = ballArm.x; T.shLz = ballArm.z; T.elL = ballArm.el; T.handLx = 0.4;
+        T.shLx = ballArm.x; T.shLz = ballArm.z; T.elL = ballArm.el; T.handLx = 0.4 + push * 0.3;
         T.shRx = guard.x; T.shRz = -guard.z; T.elR = guard.el;
       }
-      const crouch = crossing ? 0.13 : 0.07;
-      T.hipsY -= crouch;
-      T.hipLx += crouch * 3; T.hipRx += crouch * 3;
-      T.kneeL -= crouch * 5.5; T.kneeR -= crouch * 5.5;
-      T.spineX += 0.18 + crouch;
+      G.crouch = crossing ? 0.13 : 0.08 + 0.03 * A;
+      G.width = 0.05;
+      T.spineX += 0.2 + G.crouch;
+      T.spineY = hd * 0.12 - 0.1 * A * swing;                  // Ballseite leicht vorn
+      T.pelvisY *= 0.6;
       T.headX -= 0.15;
-      if (crossing && this.crossMv === 'legs') { // Ausfallschritt beim Beine-Wechsel
-        T.hipLx = hd === 1 ? 0.75 : -0.35; T.hipRx = hd === 1 ? -0.35 : 0.75;
-        T.kneeL = hd === 1 ? -0.95 : -0.5; T.kneeR = hd === 1 ? -0.5 : -0.95;
+      if (crossing && this.crossMv === 'legs') {              // Ausfallschritt beim Beine-Wechsel
+        G.zL = hd === 1 ? 0.3 : -0.2; G.zR = hd === 1 ? -0.2 : 0.3; G.crouch = 0.16;
       }
     }
 
     if (s.defending && !air && !stun) {
-      const slide = Math.min(1, Math.abs(sideSpeed) / 4);
-      const w = Math.sin(ph * 0.9) * 0.12 * slide;
-      T.hipLz = 0.26 + w; T.hipRz = -0.26 + w;
-      T.hipLx = 0.5 + T.hipLx * 0.3; T.hipRx = 0.5 + T.hipRx * 0.3;
-      T.kneeL = -0.95; T.kneeR = -0.95;
-      T.hipsY = -0.17;
-      T.spineX = 0.42; T.spineY = 0;
+      G.crouch = 0.17; G.width = 0.16; G.lift = 0.4;
+      T.spineX = 0.42; T.spineY = 0; T.pelvisY = 0;
       T.shLx = 0.6 + Math.sin(t * 7) * 0.1; T.shRx = 0.6 + Math.cos(t * 7) * 0.1;
       T.shLz = 0.85; T.shRz = -0.85;
       T.elL = 1.0; T.elR = 1.0; T.handLx = -0.4; T.handRx = -0.4;
@@ -1005,45 +1027,51 @@ export class PlayerView {
       }
     }
 
+    // Wurf: Ball zur Brust holen (Dip) → Set-Point über der Stirn → Abdrücken aus den Beinen
+    this.shootT = shooting ? this.shootT + dt : 0;
     if (shooting) {
-      T.hipLx = 0.25; T.hipRx = 0.15; T.kneeL = -0.35; T.kneeR = -0.25;
-      T.shRx = 2.55; T.shRz = 0.12; T.elR = 1.55; T.handRx = -0.6;  // Wurfhand
-      T.shLx = 2.3; T.shLz = -0.28; T.elL = 1.35;                   // Führhand
-      T.spineX = -0.04; T.spineY = 0; T.headX = 0.12;
+      const k = Math.min(1, this.shootT / 0.24), e = k * k * (3 - 2 * k);
+      T.shRx = 1.05 + 1.5 * e; T.shRz = 0.12; T.elR = 2.1 - 0.55 * e; T.handRx = -0.6 * e;   // Wurfhand
+      T.shLx = 0.95 + 1.35 * e; T.shLz = -0.28; T.elL = 1.9 - 0.55 * e;                       // Führhand
+      T.spineX = 0.12 - 0.16 * e; T.spineY = 0; T.pelvisY = 0; T.headX = 0.12;
+      if (air) { T.hipLx = 0.18; T.hipRx = 0.1; T.kneeL = -0.28; T.kneeR = -0.2; }
+      else { G.crouch = 0.14 * (1 - e * 0.7); G.width = 0.04; }
     } else if (this.followT > 0) {
       // Nachschwung: Arm gestreckt, Handgelenk abgeklappt ("Goose Neck")
       T.shRx = 2.85; T.shRz = 0.05; T.elR = 0.08; T.handRx = 1.25;
       T.shLx = 2.4; T.shLz = -0.1; T.elL = 0.25;
-      T.hipLx = 0.2; T.kneeL = -0.3; T.kneeR = -0.2;
-      T.spineX = -0.05; T.headX = 0.15;
+      T.spineX = -0.05; T.headX = 0.15; T.pelvisY = 0;
+      if (air) { T.hipLx = 0.2; T.kneeL = -0.3; T.kneeR = -0.2; }
     }
 
+    // Dunk: Ball hinter dem Kopf ausholen, dann mit Wucht durch den Ring
+    this.dunkT = s.st === 'dunk' ? this.dunkT + dt : 0;
     if (s.st === 'dunk') {
-      T.shRx = 3.05; T.shRz = 0.05; T.elR = 0.1;
-      T.shLx = 1.3; T.shLz = 0.7; T.elL = 0.4;
-      T.hipLx = 0.9; T.hipRx = 0.2; T.kneeL = -1.3; T.kneeR = -0.5;
-      T.spineX = 0.1; T.headX = 0.25;
+      const k = Math.min(1, Math.max(0, (this.dunkT - 0.22) / 0.12));
+      T.shRx = 3.35 - 0.55 * k; T.shRz = 0.05; T.elR = 1.35 - 1.2 * k; T.handRx = -0.7 + 1.5 * k;
+      T.shLx = 1.4 + 0.6 * (1 - k); T.shLz = 0.6; T.elL = 0.5;
+      T.hipLx = 1.0; T.hipRx = 0.25; T.kneeL = -1.45; T.kneeR = -0.55;
+      T.spineX = 0.05 + 0.25 * k; T.headX = 0.25 - 0.2 * k; T.pelvisY = 0;
     }
 
     if (this.reachT > 0) {
       this.reachT -= dt;
       T.shRx = 1.35; T.shRz = 0.15; T.elR = 0.1; T.handRx = 0.3;
       T.spineX = 0.5; T.spineY = 0.25;
-      T.hipRx = 0.7; T.kneeR = -0.7; T.hipLx = -0.3;
-      T.hipsY = -0.12;
+      G.zR = 0.32; G.zL = -0.12; G.crouch = 0.13;
     }
 
     if (this.celebrateT > 0 && !air && !s.hasBall) {
       const pump = Math.sin(this.celebrateT * 14) * 0.25;
       T.shLx = T.shRx = 2.5 + pump; T.shLz = 0.6; T.shRz = -0.6; T.elL = T.elR = 1.5;
       T.spineX = -0.1; T.headX = 0.2;
-      T.hipsY = Math.abs(Math.sin(this.celebrateT * 7)) * 0.05;
+      T.hipsY = Math.abs(Math.sin(this.celebrateT * 7)) * 0.06;
     }
 
-    if (this.landT > 0 && !stun) {
-      const k = this.landT / 0.22;
-      T.hipsY -= 0.12 * k; T.kneeL -= 0.7 * k; T.kneeR -= 0.7 * k; T.hipLx += 0.3 * k; T.hipRx += 0.3 * k;
-    }
+    if (this.landT > 0 && !stun) G.crouch += 0.15 * (this.landT / 0.22);
+
+    if (G.legs) this.legIK(T, G, lx, lz, spd, gA, A);
+    else { T.ankL = -(T.hipLx + T.kneeL) * 0.8; T.ankR = -(T.hipRx + T.kneeR) * 0.8; }
 
     // Hinfallen bei Ankle Breaker: auf den Hintern
     const fall = stun ? 1 : 0;
@@ -1055,6 +1083,7 @@ export class PlayerView {
       mix('hipLz', 0.2); mix('hipRz', -0.2);
       mix('spineX', -0.55); mix('shLx', -0.75); mix('shRx', -0.75); mix('shLz', 0.35); mix('shRz', -0.35);
       mix('elL', 0.1); mix('elR', 0.1); mix('headX', 0.3); mix('spineY', 0);
+      mix('ankL', -0.8); mix('ankR', -0.56); mix('pelvisY', 0); mix('pelvisZ', 0);
     }
 
     // Kopf schaut zum Ball
@@ -1070,8 +1099,14 @@ export class PlayerView {
     }
 
     // Glätten und anwenden
-    const k = 1 - Math.exp(-dt * 16);
-    for (const key in T) this.q[key] = this.q[key] === undefined ? T[key] : this.q[key] + (T[key] - this.q[key]) * k;
+    // Glätten: Beine fast direkt (sonst rutschen die Füße), Oberkörper weich
+    // Bein-IK liefert schon stetige Winkel → nach kurzer Überblendzeit ungefiltert übernehmen
+    this.ikT = G.legs ? Math.min(1, (this.ikT || 0) + dt * 5) : 0;
+    const k = 1 - Math.exp(-dt * 14), kl = G.legs ? (1 - Math.exp(-dt * 16)) * (1 - this.ikT) + this.ikT : 1 - Math.exp(-dt * 16);
+    for (const key in T) {
+      const kk = LEG_KEYS.has(key) ? kl : k;
+      this.q[key] = this.q[key] === undefined ? T[key] : this.q[key] + (T[key] - this.q[key]) * kk;
+    }
     const q = this.q;
     if (this.ready) this.applyPose(q);
     this.body.position.z = -this.fallAmt * 0.15;
@@ -1089,6 +1124,61 @@ export class PlayerView {
     this.root.updateMatrixWorld(true);
   }
 
+  // Beine per Zwei-Gelenk-IK: Fußziele aus dem Gangzyklus (Standphase = Fuß steht still am Boden)
+  legIK(T, G, lx, lz, spd, gA, A) {
+    const L = this.leg, K = this.scaleK;
+    const beta = 0.62 - 0.26 * A;                             // Anteil Bodenkontakt je Zyklus
+    const D = (0.9 + spd * 0.28) * K * G.stride;              // Weg pro Doppelschritt
+    const dx = spd > 0.05 ? lx / spd : 0, dz = spd > 0.05 ? lz / spd : 1;
+    const lift = (0.05 + 0.3 * A) * K * G.lift;
+    const feet = [];
+    let bob = 0;
+    for (const side of [0, 1]) {
+      const ph = (this.gaitPh + (side ? 0.25 : 0.75)) % 1;
+      let off, h, pitch, drive = 0;
+      if (ph < beta) {                                         // Stand: Fuß wandert mit Bodentempo nach hinten
+        const u = ph / beta;
+        off = (0.5 - u) * beta * D; h = 0;
+        pitch = u > 0.6 ? ((u - 0.6) / 0.4) * 0.6 * A : 0;      // Abdruck über die Zehen
+        bob = Math.max(bob, Math.sin(Math.PI * u));
+      } else {                                                 // Schwung: Fuß hebt ab und zieht nach vorn
+        const u = (ph - beta) / (1 - beta), e = u * u * (3 - 2 * u);
+        off = (e - 0.5) * beta * D; h = lift * Math.sin(Math.PI * Math.pow(u, 0.7 + 0.3 * (1 - A)));   // Ferse schwingt beim Rennen früh hoch
+        pitch = 0.5 * A * (1 - u) * (1 - u) - 0.25 * A * Math.sin(Math.PI * u);
+        drive = Math.sin(Math.PI * Math.min(1, u * 1.15)) * A;   // Knie vorbringen, Unterschenkel faltet ein
+      }
+      feet.push({ off: off * gA, h: h * gA, pitch: pitch * gA, drive: drive * gA });
+      (this.stance || (this.stance = [0, 0]))[side] = ph < beta ? 1 : 0;
+    }
+    T.hipsY += -G.crouch - 0.05 * A * bob * gA + 0.012 * gA * (1 - A);
+    // Becken-Drehung einbeziehen: Hüftgelenke drehen um die Wurzel, Fußziele im Beckenraum rechnen
+    const cl = (v) => Math.max(-1, Math.min(1, v));
+    const pq = this._q.setFromEuler(this._e.set(T.pelvisX, T.pelvisY, T.pelvisZ));
+    const pqi = this._qi || (this._qi = new THREE.Quaternion());
+    pqi.copy(pq).invert();
+    const root = this._rootP || (this._rootP = new THREE.Vector3());
+    root.set(L.rootX, L.rootY + T.hipsY * K, L.rootZ);
+    const hp = this._hp || (this._hp = new THREE.Vector3()), o = this._o || (this._o = new THREE.Vector3());
+    feet.forEach((f, side) => {
+      const sx = side ? -1 : 1;
+      const fx = L.restX[side] + sx * G.width * K + dx * f.off;
+      const fz = L.restZ + (side ? G.zR : G.zL) * K + dz * f.off;
+      const fy = L.ankY + f.h;
+      hp.set(L.hipX[side] - L.rootX, L.hipY - L.rootY, L.hipZ - L.rootZ).applyQuaternion(pq).add(root);
+      o.set(fx - hp.x, fy - hp.y, fz - hp.z).applyQuaternion(pqi);
+      const ox = o.x, oy = -o.y, oz = o.z;
+      const abd = Math.atan2(ox, oy) - L.restAbd[side];
+      const v = Math.hypot(ox, oy);
+      const dist = Math.min(L.Lt + L.Ls - 1e-4, Math.max(0.25 * K, Math.hypot(v, oz)));
+      const knee = Math.PI - Math.acos(cl((L.Lt * L.Lt + L.Ls * L.Ls - dist * dist) / (2 * L.Lt * L.Ls)));
+      const a = Math.acos(cl((L.Lt * L.Lt + dist * dist - L.Ls * L.Ls) / (2 * L.Lt * dist)));
+      let hip = Math.atan2(oz, v) + a, kn = knee;
+      hip += 0.4 * f.drive; kn += 1.0 * f.drive;
+      if (side) { T.hipRx = hip; T.hipRz = abd; T.kneeR = -kn; T.ankR = -(hip - kn) - f.pitch; }
+      else { T.hipLx = hip; T.hipLz = abd; T.kneeL = -kn; T.ankL = -(hip - kn) - f.pitch; }
+    });
+  }
+
   // Pose-Winkel (Modellraum-Achsen) auf das Skelett anwenden
   applyPose(q) {
     const R = (bone, x, y, z) => {
@@ -1097,6 +1187,7 @@ export class PlayerView {
       bone.quaternion.copy(this.accInv[i]).multiply(this._q).multiply(this.accP[i]).multiply(this.corr[i]);
     };
     this.B.root.position.y = this.rootRestY + q.hipsY * this.scaleK;
+    R(this.B.root, q.pelvisX || 0, q.pelvisY || 0, q.pelvisZ || 0);
     const sw = [0.1, 0.2, 0.25, 0.25, 0.2];
     this.B.sp.forEach((b, j) => R(b, q.spineX * sw[j], q.spineY * sw[j], q.spineZ * sw[j]));
     R(this.B.neck[0], q.headX * 0.25, q.headY * 0.25, 0);
@@ -1118,8 +1209,8 @@ export class PlayerView {
     L(this.legR.hip, q.hipRx, q.hipRz);
     L(this.legL.knee, q.kneeL);
     L(this.legR.knee, q.kneeR);
-    L(this.legL.ankle, -(q.hipLx + q.kneeL) * 0.8);
-    L(this.legR.ankle, -(q.hipRx + q.kneeR) * 0.8);
+    L(this.legL.ankle, q.ankL !== undefined ? q.ankL : -(q.hipLx + q.kneeL) * 0.8);
+    L(this.legR.ankle, q.ankR !== undefined ? q.ankR : -(q.hipRx + q.kneeR) * 0.8);
       }
 
   // Zuschauer: stehen/sitzen, wippen, schauen zum Ball, jubeln bei Körben
