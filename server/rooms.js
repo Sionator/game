@@ -5,11 +5,12 @@ import { SNAP_EVERY } from '../shared/constants.js';
 
 const COLORS = ['#e8413c', '#2f7cf6', '#22c55e', '#f59e0b', '#a855f7', '#ec4899', '#14b8a6', '#f8fafc'];
 const EMOTES = 8;
-const LEVELS = ['easy', 'medium', 'hard'];
+const LEVELS = ['easy', 'medium', 'hard', 'king'];
 const BOT_NAMES = {
   easy: ['Rookie-Bot', 'Bankdrücker-Bot', 'Airball-Bot'],
   medium: ['Street-Bot', 'Asphalt-Bot', 'Käfig-Bot'],
   hard: ['MVP-Bot', 'Legenden-Bot', 'Hall-of-Fame-Bot'],
+  king: ['King', 'Der Zug', 'Big Chief'],
 };
 let nextId = 1;
 
@@ -47,7 +48,7 @@ export class Lobby {
       case 'hello':
         c.name = clean(m.name, 16) || 'Spieler';
         c.color = /^#[0-9a-f]{6}$/i.test(m.color) ? m.color : COLORS[0];
-        c.body = ['m', 'f'].includes(m.body) ? m.body : 'auto';
+        c.body = ['m', 'f', 'k'].includes(m.body) ? m.body : 'auto';
         break;
       case 'create': {
         const room = this.newRoom(c, m);
@@ -201,7 +202,7 @@ export class Lobby {
     const names = [...BOT_NAMES[r.level]];
     for (const t of ['A', 'B']) {
       while (r.members.filter((x) => x.team === t).length < half) {
-        r.members.push({ id: 'bot' + nextId++, name: names.shift() || 'Bot', color: COLORS[1], team: t, bot: true, level: r.level });
+        r.members.push({ id: 'bot' + nextId++, name: names.shift() || 'Bot', color: COLORS[1], team: t, bot: true, level: r.level, body: r.level === 'king' ? 'k' : 'auto' });
       }
     }
     // Trikotfarben pro Team

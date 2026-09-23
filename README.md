@@ -29,7 +29,8 @@ Nachts auf einem Streetball-Court mitten in der Stadt: Crossover, Dunks, Blocks 
   Poren, warmer Haut, Augen mit Hornhaut-Glanz, Wimpern und Augenbrauen; Frisuren (Afro, Dreads, Cornrows,
   Twists, Hightop, Dutt, Fade, Waves, …), Bärte, Tattoos, Sleeves, Stirnbänder, Ketten, Sneaker;
   Tank-Top-Trikots mit Paspel, Teamname, Nummer und Name auf dem Rücken, weite Shorts
-- Im Menü wählbar: Figur **Zufall / Spieler / Spielerin**
+- Im Menü wählbar: Figur **Zufall / Spieler / Spielerin / Power-Forward** (2,06 m, Vollbart, Stirnband, Kette)
+- Bot-Stufe **King**: ein Power-Forward als stärkster Bot – zieht zum Korb, dunkt, trifft sicher
 - **Grafikqualität** im Menü einstellbar (Hoch / Mittel / Niedrig) – am Handy automatisch „Mittel“
 
 ## Steuerung

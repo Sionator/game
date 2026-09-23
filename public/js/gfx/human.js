@@ -54,7 +54,7 @@ function blockGeometry(A, name, vi) {
   const H = A.header, b = H.blocks[name], vb = H.variants[vi].blocks[name];
   const g = new THREE.BufferGeometry();
   const p16 = A.arr(vb.pos), n8 = A.arr(vb.nrm);
-  g.setAttribute('position', new THREE.BufferAttribute(Float32Array.from(p16, (v) => v / 16000), 3));
+  g.setAttribute('position', new THREE.BufferAttribute(Float32Array.from(p16, (v) => v / 13000), 3));
   g.setAttribute('normal', new THREE.BufferAttribute(Float32Array.from(n8, (v) => v / 127), 3));
   g.setAttribute('uv', new THREE.BufferAttribute(A.arr(b.uv), 2));
   g.setAttribute('skinIndex', new THREE.BufferAttribute(A.arr(b.skinIndex), 4));
@@ -120,7 +120,7 @@ const SKIN = {
   asian: ['#e6c09c', '#d8b08a', '#eccaa6'],
   mixed: ['#b07b55', '#9c6a48', '#c48d64', '#a87450'],
 };
-const VARIANT_SKIN = { m_af: 'african', m_ca: 'caucasian', m_as: 'asian', m_mx: 'mixed', m_big: 'african', f_af: 'african', f_ca: 'caucasian' };
+const VARIANT_SKIN = { m_af: 'african', m_ca: 'caucasian', m_as: 'asian', m_mx: 'mixed', m_big: 'african', f_af: 'african', f_ca: 'caucasian', m_king: 'african' };
 
 function composeSkin(A, o) {
   const W = A.mask.width, H = A.mask.height;
@@ -403,9 +403,11 @@ export class PlayerView {
     const pick = (arr) => arr[Math.floor(rnd() * arr.length)];
     const H = A.header;
     // Variante wählen (Figur-Wunsch aus dem Menü: m / f / auto)
-    const males = H.variants.map((v, i) => [v, i]).filter(([v]) => v.gender === 1);
+    const males = H.variants.map((v, i) => [v, i]).filter(([v]) => v.gender === 1 && v.id !== 'm_king');
+    const king = H.variants.map((v, i) => [v, i]).filter(([v]) => v.id === 'm_king');
     const females = H.variants.map((v, i) => [v, i]).filter(([v]) => v.gender === 0);
-    const pool = info.body === 'f' ? females : info.body === 'm' ? males : (rnd() < 0.2 ? females : males);
+    const isKing = info.body === 'k' && king.length > 0;
+    const pool = isKing ? king : info.body === 'f' ? females : info.body === 'm' ? males : (rnd() < 0.2 ? females : males);
     const [variant, vi] = pool[seed % pool.length];
     this.variant = variant;
     const female = variant.gender === 0;
@@ -483,11 +485,14 @@ export class PlayerView {
 
     // --- Aussehen
     const ethn = VARIANT_SKIN[variant.id] || 'mixed';
-    const skinHex = pick(SKIN[ethn]);
-    const hairHex = rnd() < 0.06 ? info.color : ethn === 'caucasian' ? pick(HAIR_COL) : pick(HAIR_COL.slice(0, 4));
+    let skinHex = pick(SKIN[ethn]);
+    let hairHex = rnd() < 0.06 ? info.color : ethn === 'caucasian' ? pick(HAIR_COL) : pick(HAIR_COL.slice(0, 4));
     let style = pick(female ? STYLES_F : STYLES_M);
     if (info.hairStyle) style = info.hairStyle;
-    const beard = female ? 'none' : pick(['none', 'none', 'stubble', 'stubble', 'beard', 'goatee']);
+    let beard = female ? 'none' : pick(['none', 'none', 'stubble', 'stubble', 'beard', 'goatee']);
+    // Power-Forward „King“: fester Look (Vollbart, kurze Haare, Stirnband, Arm-Sleeve, Kette)
+    if (isKing) { skinHex = '#5e3b28'; hairHex = '#1a1310'; style = 'buzz'; beard = 'beard'; }
+    this.isKing = isKing;
     const painted = ['buzz', 'fade', 'waves'].includes(style) ? style : ['dreads', 'twists', 'afro', 'cornrows', 'bun'].includes(style) ? 'buzz' : style === 'hightop' ? 'fade' : null;
     const sockHex = rnd() < 0.55 ? '#f2f2f2' : '#15171c';
     const skinTex = composeSkin(A, {
@@ -495,8 +500,8 @@ export class PlayerView {
       stubble: beard === 'stubble' ? 0.32 : beard === 'beard' || beard === 'goatee' ? 0.25 : 0,
       sock: sockHex, sockStripe: rnd() < 0.5 ? info.color : (sockHex === '#f2f2f2' ? '#15171c' : '#f2f2f2'),
       sockTop: -6.3 - rnd() * 0.6,
-      tights: rnd() < 0.15, kneeSleeve: rnd() < 0.3 ? pick(['L', 'R']) : null, armSleeve: rnd() < 0.3,
-      tattoo: rnd() < 0.35 ? pick(['band', 'sleeve']) : null,
+      tights: !isKing && rnd() < 0.15, kneeSleeve: !isKing && rnd() < 0.3 ? pick(['L', 'R']) : null, armSleeve: isKing || rnd() < 0.3,
+      tattoo: isKing ? 'band' : rnd() < 0.35 ? pick(['band', 'sleeve']) : null,
     });
     const skinMat = new THREE.MeshPhysicalMaterial({
       map: skinTex, roughnessMap: skinTex.userData.rough, roughness: 1, sheen: 0.35, sheenRoughness: 0.6,
@@ -505,7 +510,7 @@ export class PlayerView {
       // warmes Streulicht (Fake-Subsurface): hebt Schatten rötlich an statt grau
       emissive: new THREE.Color(0xff8a6a), emissiveMap: skinTex, emissiveIntensity: 0.08,
     });
-    const number = String((seed % 98) + 1);
+    const number = isKing ? '1' : String((seed % 98) + 1);
     const jerseyMat = new THREE.MeshPhysicalMaterial({
       map: jerseyTexture(info.color, number, info.name, WORDMARKS[hash(info.color) % WORDMARKS.length]),
       roughness: 0.7, sheen: 0.6, sheenRoughness: 0.5, sheenColor: new THREE.Color(info.color).lerp(new THREE.Color(0xffffff), 0.3), side: THREE.DoubleSide,
@@ -599,14 +604,23 @@ export class PlayerView {
       w.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), d.clone().normalize());
       arm.elbow.add(w);
     }
-    if (!female && rnd() < 0.25) {
-      const chain = new THREE.Mesh(new THREE.TorusGeometry(0.075 * variant.height / 1.95, 0.004, 6, 48), new THREE.MeshStandardMaterial({ color: 0xf2c14e, metalness: 1, roughness: 0.25 }));
-      const nb = this.B.neck[0];
-      chain.position.set(0, -0.03, 0.03);
-      chain.rotation.x = Math.PI / 2 - 0.5;
+    if (!female && (isKing || rnd() < 0.25)) {
+      // Halsumfang an der Basis messen → Kette liegt auf, statt durch den Hals zu gehen
+      const nb = this.B.neck[0], nj = J('neck01');
+      const bpos = A.arr(H.variants[vi].blocks.body.pos);
+      let rx = 0.05, zf = nj.z + 0.04, zb = nj.z - 0.04;
+      for (let i = 0; i < bpos.length; i += 3) {
+        const x = bpos[i] / 13000, y = bpos[i + 1] / 13000, z = bpos[i + 2] / 13000;
+        if (Math.abs(y - (nj.y - 0.015)) > 0.012 || Math.abs(x) > 0.11) continue;
+        rx = Math.max(rx, Math.abs(x)); zf = Math.max(zf, z); zb = Math.min(zb, z);
+      }
+      const chain = new THREE.Mesh(new THREE.TorusGeometry(1, 0.004 / (rx + 0.008), 6, 56), new THREE.MeshStandardMaterial({ color: 0xf2c14e, metalness: 1, roughness: 0.25 }));
+      chain.scale.set(rx + 0.008, (zf - zb) / 2 + 0.01, rx + 0.008);
+      chain.position.set(0, -0.03, (zf + zb) / 2 - nj.z + 0.004);
+      chain.rotation.x = Math.PI / 2 + 0.35;                     // vorne tiefer (hängt auf dem Brustbein)
       nb.add(chain);
     }
-    if (rnd() < 0.35 && !['afro', 'hightop'].includes(style)) this.headband = bandMat;
+    if ((isKing || rnd() < 0.35) && !['afro', 'hightop'].includes(style)) this.headband = bandMat;
     this.buildHair(A, vi, style, beard, hairHex, rnd, headRest);
 
     this.ready = true;
@@ -635,7 +649,7 @@ export class PlayerView {
       sh.vertexShader = 'attribute float hl;\nvarying float vHl;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n  vHl = hl;');
       sh.fragmentShader = 'uniform vec3 hA;\nvarying float vHl;\n' + sh.fragmentShader.replace('#include <alphatest_fragment>', '  float hn = fract(sin(dot(floor(vMapUv * 700.0), vec2(12.9898, 78.233))) * 43758.5453);\n  diffuseColor.a *= smoothstep(hA.x, hA.y, vHl + (hn - 0.5) * 0.06) * hA.z;\n#include <alphatest_fragment>');
     };
-    const P = (i) => new THREE.Vector3(p16[i * 3] / 16000, p16[i * 3 + 1] / 16000, p16[i * 3 + 2] / 16000);
+    const P = (i) => new THREE.Vector3(p16[i * 3] / 13000, p16[i * 3 + 1] / 13000, p16[i * 3 + 2] / 13000);
     const N = (i) => new THREE.Vector3(n8[i * 3] / 127, n8[i * 3 + 1] / 127, n8[i * 3 + 2] / 127).normalize();
     let top = -Infinity; for (let i = 0; i < n; i++) top = Math.max(top, P(i).y);
     const shell = (offsetFn) => {
@@ -727,12 +741,14 @@ export class PlayerView {
       const bp = A.arr(bvb.pos), bn = A.arr(bvb.nrm), sI = A.arr(bb.skinIndex), sW = A.arr(bb.skinWeight), bIdx = A.arr(bb.visible);
       const hi = BONE(A, 'head');
       const headW = (i) => { let w = 0; for (let k = 0; k < 4; k++) if (sI[i * 4 + k] === hi) w += sW[i * 4 + k] / 255; return w; };
-      const hbOf = (i) => top - bp[i * 3 + 1] / 16000 + 0.35 * (bp[i * 3 + 2] / 16000 - zMid);
+      // Unterkante vorne ~4 cm über der Augenmitte, hinten tiefer
+      const eyeY = H.variants[vi].eyes[0].c[1];
+      const hbOf = (i) => 0.1205 - (bp[i * 3 + 1] / 13000 - eyeY) + 0.35 * (bp[i * 3 + 2] / 13000 - zMid);
       const map = new Map(), pos = [], hbA = [], keep = [];
       const vid = (i) => {
         if (map.has(i)) return map.get(i);
         const nn = new THREE.Vector3(bn[i * 3], bn[i * 3 + 1], bn[i * 3 + 2]).normalize();
-        const p = new THREE.Vector3(bp[i * 3] / 16000, bp[i * 3 + 1] / 16000, bp[i * 3 + 2] / 16000).addScaledVector(nn, 0.0045).sub(headRest);
+        const p = new THREE.Vector3(bp[i * 3] / 13000, bp[i * 3 + 1] / 13000, bp[i * 3 + 2] / 13000).addScaledVector(nn, 0.0045).sub(headRest);
         map.set(i, hbA.length); pos.push(p.x, p.y, p.z); hbA.push(hbOf(i));
         return hbA.length - 1;
       };
@@ -767,7 +783,7 @@ export class PlayerView {
       for (let i = 0; i < cnt; i++) { minY = Math.min(minY, bp[i * 3 + 1]); maxY = Math.max(maxY, bp[i * 3 + 1]); }
       const pos = new Float32Array(cnt * 3), colA = new Float32Array(cnt * 4);
       for (let i = 0; i < cnt; i++) {
-        const p = new THREE.Vector3(bp[i * 3] / 16000, bp[i * 3 + 1] / 16000, bp[i * 3 + 2] / 16000);
+        const p = new THREE.Vector3(bp[i * 3] / 13000, bp[i * 3 + 1] / 13000, bp[i * 3 + 2] / 13000);
         const nn = new THREE.Vector3(bn[i * 3] / 127, bn[i * 3 + 1] / 127, bn[i * 3 + 2] / 127).normalize();
         const hy = (bp[i * 3 + 1] - minY) / (maxY - minY || 1);
         let a = 1 - s(0.72, 0.98, hy);

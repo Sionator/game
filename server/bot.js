@@ -5,6 +5,8 @@ const LEVELS = {
   easy: { sigma: 0.13, react: 0.35, steal: 0.25, shootOpen: 2.4, speed: 0.75, moves: 0.6, pass: 0.6 },
   medium: { sigma: 0.075, react: 0.2, steal: 0.5, shootOpen: 1.9, speed: 0.9, moves: 1.2, pass: 1 },
   hard: { sigma: 0.04, react: 0.1, steal: 0.9, shootOpen: 1.5, speed: 1, moves: 1.8, pass: 1.4 },
+  // „King“: Power-Forward – trifft sicher, reagiert blitzschnell, sucht den Weg zum Korb
+  king: { sigma: 0.035, react: 0.07, steal: 1, shootOpen: 1.7, speed: 1.05, moves: 1.6, pass: 1.6 },
 };
 
 const SPOTS = [

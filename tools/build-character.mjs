@@ -91,13 +91,42 @@ const VARIANTS = [
   { id: 'm_big', gender: 1, muscle: 0.95, weight: 0.66, height: 0.8, prop: 0.75, h: 2.04, race: { african: 0.7, caucasian: 0.3, asian: 0 } },
   { id: 'f_af', gender: 0, muscle: 0.72, weight: 0.45, height: 0.72, prop: 0.9, h: 1.84, race: { african: 0.85, caucasian: 0.15, asian: 0 } },
   { id: 'f_ca', gender: 0, muscle: 0.7, weight: 0.42, height: 0.66, prop: 0.9, h: 1.79, race: { african: 0, caucasian: 0.75, asian: 0.25 } },
+  // Power-Forward: sehr groß, massiv, breites kantiges Gesicht (eigene, erfundene Figur)
+  { id: 'm_king', gender: 1, muscle: 1.0, weight: 0.64, height: 0.85, prop: 0.8, h: 2.06, race: { african: 1, caucasian: 0, asian: 0 } },
 ];
+// Gesichtszüge je Variante (MakeHuman-Detail-Targets; beidseitige werden gespiegelt gesetzt)
+const FACE_BASE_M = { 'chin/chin-width-incr': 0.3, 'chin/chin-prominent-incr': 0.25, 'cheek/cheek-bones-incr': 0.35, 'head/head-square': 0.25,
+  'eyebrows/eyebrows-trans-up': 0.25, 'mouth/mouth-upperlip-volume-incr': 0.2, 'nose/nose-point-width-decr': 0.15, 'neck/neck-scale-horiz-incr': 0.2 };
+const FACE_BASE_F = { 'head/head-oval': 0.45, 'cheek/cheek-bones-incr': 0.4, 'chin/chin-width-decr': 0.25, 'eyebrows/eyebrows-trans-up': 0.3,
+  'mouth/mouth-lowerlip-volume-incr': 0.3, 'mouth/mouth-upperlip-volume-incr': 0.2, 'nose/nose-scale-horiz-decr': 0.2, 'nose/nose-point-up': 0.2 };
+const FACE = {
+  m_af: { 'nose/nose-flaring-incr': 0.35, 'mouth/mouth-lowerlip-volume-incr': 0.35, 'chin/chin-height-incr': 0.2 },
+  m_ca: { 'nose/nose-hump-incr': 0.2, 'nose/nose-scale-horiz-decr': 0.2, 'chin/chin-cleft-incr': 0.3, 'head/head-rectangular': 0.3 },
+  m_as: { 'cheek/cheek-bones-incr': 0.2, 'head/head-diamond': 0.25, 'nose/nose-base-up': 0.2 },
+  m_mx: { 'nose/nose-flaring-incr': 0.2, 'mouth/mouth-lowerlip-volume-incr': 0.2, 'head/head-oval': 0.2 },
+  m_big: { 'head/head-square': 0.35, 'chin/chin-width-incr': 0.3, 'head/head-fat-incr': 0.25 },
+  f_af: { 'nose/nose-flaring-incr': 0.25, 'mouth/mouth-lowerlip-volume-incr': 0.2 },
+  f_ca: { 'nose/nose-point-width-decr': 0.2 },
+  m_king: { 'head/head-square': 0.55, 'chin/chin-width-incr': 0.45, 'chin/chin-prominent-incr': 0.35, 'chin/chin-height-incr': 0.25,
+    'nose/nose-flaring-incr': 0.4, 'nose/nose-scale-horiz-incr': 0.25, 'mouth/mouth-lowerlip-volume-incr': 0.35, 'neck/neck-scale-horiz-incr': 0.5,
+    'eyebrows/eyebrows-trans-down': 0.15 },
+};
 for (const v of VARIANTS) {
   v.extra = {
     'torso/torso-muscle-pectoral-incr.target': v.gender ? 0.45 : 0.1,
     'torso/torso-muscle-dorsi-incr.target': v.gender ? 0.55 : 0.2,
     'stomach/stomach-pregnant-decr.target': 0.4,
   };
+  const face = { ...(v.gender ? FACE_BASE_M : FACE_BASE_F) };
+  for (const [k, w] of Object.entries(FACE[v.id] || {})) face[k] = (face[k] || 0) + w;
+  for (const [k, w] of Object.entries(face)) {
+    const [dir, name] = k.split('/');
+    const files = fs.existsSync(`${MH}/targets/${dir}/${name}.target`) ? [name] : [`l-${name}`, `r-${name}`];
+    for (const f of files) {
+      if (!fs.existsSync(`${MH}/targets/${dir}/${f}.target`)) { console.warn('fehlt:', dir, f); continue; }
+      v.extra[`${dir}/${f}.target`] = Math.min(1, w);
+    }
+  }
 }
 
 // ------------------------------------------------------------------ Skelett
@@ -674,7 +703,7 @@ const push = (arr) => {
   offset += buf.length;
   return desc;
 };
-const q16 = (f) => Int16Array.from(f, (v) => Math.round(v * 16000));        // Positionen in m (±2 m)
+const q16 = (f) => Int16Array.from(f, (v) => Math.round(v * 13000));        // Positionen in m (±2,5 m)
 const q8 = (f) => Int8Array.from(f, (v) => Math.round(v * 127));
 for (const [name, blk] of Object.entries(blocks)) {
   const n = blk.count || blk.orig.length;
