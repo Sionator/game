@@ -77,6 +77,45 @@ function blockGeometry(A, name, vi) {
   return g;
 }
 
+// Feinrelief der Gesichtshaut (prozedural in der Gesichts-UV): Poren, feine Stirn-/Augenfältchen,
+// senkrechte Lippenrillen – über Ableitungen als Bump-Normalen, kostet keine Textur
+const SKIN_DETAIL_GLSL = `
+float sdHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float sdNoise(vec2 p) {
+  vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(sdHash(i), sdHash(i + vec2(1, 0)), f.x), mix(sdHash(i + vec2(0, 1)), sdHash(i + vec2(1, 1)), f.x), f.y);
+}
+float skinHeight(vec2 uv, float lip) {
+  float fw = max(fwidth(uv.x), fwidth(uv.y));                                         // Pixelgröße in UV
+  float aaP = 1.0 - smoothstep(0.0004, 0.0012, fw), aaF = 1.0 - smoothstep(0.0015, 0.004, fw);   // nur zeigen, wenn auflösbar
+  float pores = (1.0 - pow(sdNoise(uv * vec2(1400.0, 900.0)), 3.0)) * aaP;             // kleine Vertiefungen
+  float fine = sdNoise(uv * vec2(260.0, 170.0)) * 0.5 * aaF;
+  float lines = (sin(uv.x * 2600.0 + sdNoise(uv * 90.0) * 6.0) * 0.5 + 0.5) * aaP;       // Lippenrillen (senkrecht)
+  float forehead = smoothstep(0.62, 0.7, uv.y) * (sin(uv.y * 900.0 + sdNoise(uv * 40.0) * 5.0) * 0.5 + 0.5) * 0.25;
+  return mix(pores * 0.35 + fine * 0.25 + forehead, lines * 0.5, lip) * 0.012;
+}
+vec3 skinPerturb(vec3 surf_pos, vec3 surf_norm, vec2 dHdxy, float faceDir) {
+  vec3 vSigmaX = normalize(dFdx(surf_pos)), vSigmaY = normalize(dFdy(surf_pos));
+  vec3 R1 = cross(vSigmaY, surf_norm), R2 = cross(surf_norm, vSigmaX);
+  float fDet = dot(vSigmaX, R1) * faceDir;
+  vec3 vGrad = sign(fDet) * (dHdxy.x * R1 + dHdxy.y * R2);
+  return normalize(abs(fDet) * surf_norm - vGrad * 24.0);
+}
+`;
+let _faceMaskTex = null;
+function faceMaskTexture(A) {
+  if (_faceMaskTex) return _faceMaskTex;
+  const im = A.face.mask;
+  // Zeilen umdrehen (Bild oben = v 1, wie bei den Canvas-Texturen)
+  const W = im.width, H = im.height, d = new Uint8Array(W * H * 4);
+  for (let y = 0; y < H; y++) d.set(im.data.subarray((H - 1 - y) * W * 4, (H - y) * W * 4), y * W * 4);
+  _faceMaskTex = new THREE.DataTexture(d, W, H);
+  _faceMaskTex.needsUpdate = true;
+  _faceMaskTex.magFilter = THREE.LinearFilter; _faceMaskTex.minFilter = THREE.LinearFilter;
+  _faceMaskTex.userData.shared = true;
+  return _faceMaskTex;
+}
+
 // Fell-Schalen: mehrere Lagen derselben Fläche; nach außen hin bleiben nur einzelne Strähnen stehen,
 // innere Lagen sind dunkler (Eigenschatten) → Haare/Bart wirken dicht und fusselig statt wie eine Haube
 const STRAND_GLSL = (D, aspect, sparse = 0.92) => `
@@ -689,10 +728,12 @@ export class PlayerView {
     skinMat.onBeforeCompile = (sh) => {
       sh.uniforms.faceMap = { value: faceTex };
       sh.uniforms.faceRough = { value: faceTex.userData.rough };
+      sh.uniforms.faceMask = { value: faceMaskTexture(A) };
       sh.vertexShader = 'attribute vec2 faceUv;\nattribute float faceW;\nvarying vec2 vFaceUv;\nvarying float vFaceW;\n' +
         sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n  vFaceUv = faceUv; vFaceW = faceW;');
-      sh.fragmentShader = 'uniform sampler2D faceMap;\nuniform sampler2D faceRough;\nvarying vec2 vFaceUv;\nvarying float vFaceW;\n' + sh.fragmentShader
+      sh.fragmentShader = 'uniform sampler2D faceMap;\nuniform sampler2D faceRough;\nuniform sampler2D faceMask;\nvarying vec2 vFaceUv;\nvarying float vFaceW;\n' + SKIN_DETAIL_GLSL + sh.fragmentShader
         .replace('#include <map_fragment>', '#include <map_fragment>\n  vec3 faceCol = texture2D(faceMap, vFaceUv).rgb;\n  diffuseColor.rgb = mix(diffuseColor.rgb, faceCol * diffuse, vFaceW);')
+        .replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\n  if (vFaceW > 0.01) {\n    float lipM = texture2D(faceMask, vFaceUv).g;\n    float hgt = skinHeight(vFaceUv, lipM);\n    normal = skinPerturb(-vViewPosition, normal, vec2(dFdx(hgt), dFdy(hgt)) * 1.6 * vFaceW, faceDirection);\n  }')
         .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\n  roughnessFactor = mix(roughnessFactor, roughness * texture2D(faceRough, vFaceUv).g, vFaceW);')
         .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n  totalEmissiveRadiance = mix(totalEmissiveRadiance, emissive * faceCol, vFaceW);')
         // weiches Streiflicht an den Konturen (Haut streut Licht an flachen Winkeln) → Gesicht löst sich vom Hintergrund
@@ -794,7 +835,11 @@ export class PlayerView {
   col = mix(vec3(0.015), col, smoothstep(0.13, 0.16, rho));                // Pupille
   float lid = (1.0 - 0.6 * smoothstep(0.05, 0.55, ep.y)) * (1.0 - 0.25 * smoothstep(0.2, 0.6, -ep.y));                     // Schatten vom Oberlid
   float corner = 1.0 - 0.45 * smoothstep(0.55, 0.95, rho);
-  diffuseColor.rgb *= col * lid * corner;`);
+  diffuseColor.rgb *= col * lid * corner;
+  // Lichtreflex (Flutlicht von oben) und feuchter Rand am Unterlid
+  float cl = smoothstep(0.075, 0.04, length(ep.xy - vec2(-0.16, 0.2))) * step(0.0, vEyeP.z);
+  diffuseColor.rgb = mix(diffuseColor.rgb, vec3(1.6), cl * 0.85);
+  diffuseColor.rgb += vec3(0.08, 0.05, 0.05) * smoothstep(0.55, 0.75, -ep.y) * step(0.0, vEyeP.z);`);
     };
     // Hornhaut: fast unsichtbar, aber mit scharfem Glanzpunkt → lebendiger Blick
     const corneaMat = new THREE.MeshPhysicalMaterial({ color: 0xffffff, transparent: true, opacity: 0.06, roughness: 0.02, specularIntensity: 1, clearcoat: 1, clearcoatRoughness: 0.02, depthWrite: false });
