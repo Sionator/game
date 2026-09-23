@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <title>Streetball 1v1</title>
+  <meta name="theme-color" content="#0b0f1a">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏀</text></svg>">
+  <link rel="stylesheet" href="style.css">
+  <script type="importmap">
+    { "imports": { "three": "/vendor/three/three.module.js" } }
+  </script>
+</head>
+<body>
+  <canvas id="c"></canvas>
+
+  <!-- Hauptmenü -->
+  <section id="menu" class="screen visible">
+    <div class="panel">
+      <h1><span class="ball">🏀</span> STREETBALL <em>1v1</em></h1>
+      <p class="sub">3D-Streetball gegen deine Freunde – online, direkt im Browser.</p>
+
+      <label class="field">Dein Name
+        <input id="name" maxlength="16" placeholder="z. B. Air Max" autocomplete="off">
+      </label>
+      <div class="field">Trikotfarbe
+        <div id="colors" class="colors"></div>
+      </div>
+      <div class="field">Spiel bis
+        <div class="seg" id="targetSeg">
+          <button data-v="11" class="on">11 Punkte</button>
+          <button data-v="21">21 Punkte</button>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button id="btnCreate" class="big primary">Raum erstellen</button>
+        <div class="join">
+          <input id="code" maxlength="4" placeholder="CODE" autocomplete="off">
+          <button id="btnJoin" class="big">Beitreten</button>
+        </div>
+        <div class="botrow">
+          <span>Üben gegen Bot:</span>
+          <button class="bot" data-l="easy">Rookie</button>
+          <button class="bot" data-l="medium">Street</button>
+          <button class="bot" data-l="hard">MVP</button>
+        </div>
+      </div>
+      <p id="menuErr" class="err"></p>
+      <details class="howto">
+        <summary>Steuerung &amp; Regeln</summary>
+        <div class="grid">
+          <div><kbd>W A S D</kbd> / Pfeile</div><div>Laufen</div>
+          <div><kbd>Shift</kbd></div><div>Sprinten (kostet Ausdauer)</div>
+          <div><kbd>Leertaste</kbd> halten</div><div>Wurf aufladen – im <b class="g">grünen Bereich</b> loslassen!</div>
+          <div><kbd>Leertaste</kbd> + Sprint nah am Korb</div><div>DUNK 💥</div>
+          <div><kbd>Leertaste</kbd> ohne Ball</div><div>Springen / Blocken</div>
+          <div><kbd>E</kbd></div><div>Ball klauen</div>
+          <div><kbd>Q</kbd></div><div>Crossover – kann den Gegner umhauen (Ankle Breaker!)</div>
+          <div><kbd>1</kbd>–<kbd>8</kbd></div><div>Emotes</div>
+        </div>
+        <ul>
+          <li>Innerhalb der Linie 2 Punkte, außerhalb 3 Punkte.</li>
+          <li><b>Klären:</b> Nach Rebound oder Steal musst du erst hinter die Dreierlinie, sonst zählt der Korb nicht.</li>
+          <li>3 Treffer in Folge = <b class="fire">ON FIRE</b> 🔥 – größerer grüner Bereich.</li>
+          <li>14 Sekunden Wurfuhr. Nach jedem Korb bekommt der Gegner den Ball.</li>
+        </ul>
+      </details>
+    </div>
+  </section>
+
+  <!-- Warteraum -->
+  <section id="lobby" class="screen">
+    <div class="panel">
+      <p class="sub">Raum-Code</p>
+      <div id="roomCode" class="code">----</div>
+      <button id="btnCopy" class="small">🔗 Einladungslink kopieren</button>
+      <div id="players" class="players"></div>
+      <div id="lobbyTarget" class="sub"></div>
+      <button id="btnStart" class="big primary">Spiel starten</button>
+      <p id="lobbyHint" class="sub">Warte auf Gegner…</p>
+      <button id="btnLeave" class="small ghost">Verlassen</button>
+    </div>
+  </section>
+
+  <!-- HUD -->
+  <div id="hud" class="hidden">
+    <div id="scoreboard">
+      <div class="team" id="sbA"><span class="dot"></span><span class="nm"></span><span class="pts">0</span></div>
+      <div class="mid"><div id="shotClock">14</div><div id="toWin"></div></div>
+      <div class="team right" id="sbB"><span class="pts">0</span><span class="nm"></span><span class="dot"></span></div>
+    </div>
+    <div id="status"></div>
+    <div id="big"></div>
+    <div id="feed"></div>
+    <div id="stamina"><div></div></div>
+    <div id="meter" class="hidden"><div class="green"></div><div class="fill"></div></div>
+    <div id="grade"></div>
+    <div id="ping"></div>
+    <button id="btnMenu" class="small ghost corner">☰</button>
+    <div id="emotes"></div>
+  </div>
+
+  <!-- Touch-Steuerung -->
+  <div id="touch" class="hidden">
+    <div id="stick"><div id="knob"></div></div>
+    <div id="tbtns">
+      <button data-a="shoot" class="tb main">🏀<small>Wurf</small></button>
+      <button data-a="sprint" class="tb">⚡<small>Sprint</small></button>
+      <button data-a="steal" class="tb">✋<small>Klau</small></button>
+      <button data-a="move" class="tb">🌀<small>Move</small></button>
+    </div>
+  </div>
+
+  <!-- Spielende -->
+  <section id="over" class="screen">
+    <div class="panel">
+      <h2 id="overTitle"></h2>
+      <div id="overScore" class="code"></div>
+      <table id="statsTable"></table>
+      <button id="btnRematch" class="big primary">Revanche!</button>
+      <p id="rematchHint" class="sub"></p>
+      <button id="btnToLobby" class="small ghost">Zum Menü</button>
+    </div>
+  </section>
+
+  <div id="toast"></div>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

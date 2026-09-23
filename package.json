@@ -1,0 +1,18 @@
+{
+  "name": "streetball-1v1",
+  "version": "1.0.0",
+  "description": "3D 1v1 Streetball – online mit Freunden spielen",
+  "type": "module",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "test": "node --test test/*.test.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "three": "^0.170.0",
+    "ws": "^8.18.0"
+  }
+}
