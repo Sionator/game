@@ -128,6 +128,8 @@ function composeSkin(A, o) {
   c.width = W; c.height = H;
   const g = c.getContext('2d');
   const img = g.createImageData(W, H);
+  const rc = document.createElement('canvas'); rc.width = W; rc.height = H;
+  const rg = rc.getContext('2d'), rimg = rg.createImageData(W, H), rd = rimg.data;
   const d = img.data, m = A.mask.data, mb = A.maskB.data, p = A.pos.data;
   const bb = A.header.bbox;
   const sk = rgb(o.skin), lip = rgb(o.lip), hair = rgb(o.hair);
@@ -148,14 +150,29 @@ function composeSkin(A, o) {
     // Grundton mit AO, leicht rötlich in Falten
     const aoS = Math.pow(ao, 1.35);
     let r = sk.r * (0.5 + 0.5 * aoS) * (1 + nn * 0.06), gg = sk.g * (0.46 + 0.54 * aoS) * (1 + nn * 0.06), b = sk.b * (0.44 + 0.56 * aoS) * (1 + nn * 0.05);
+    // Gesichtsdetails: durchblutete Wangen, Nase und Ohren, Schatten unter den Augen und in der Lidfalte
+    let rough = 0.62;
+    if (y > 6.0 && y < 8.0 && z > -0.4) {
+      const ax = Math.abs(x);
+      const gs = (cx, cy, cz, rr) => Math.exp(-((ax - cx) ** 2 + (y - cy) ** 2 + (z - cz) ** 2) / (rr * rr));
+      const blush = gs(0.52, 6.95, 1.2, 0.3) * 0.28 + gs(0, 6.95, 1.62, 0.2) * 0.22 + (ax > 0.62 && y > 6.85 && y < 7.65 && z < 0.8 ? 0.22 : 0);
+      if (blush > 0.01) { r *= 1 + blush * 0.12; gg *= 1 - blush * 0.14; b *= 1 - blush * 0.12; }
+      const under = gs(0.32, 7.13, 1.32, 0.14) * 0.06 + gs(0.31, 7.43, 1.36, 0.1) * 0.08;
+      if (under > 0.01) { r *= 1 - under; gg *= 1 - under * 1.1; b *= 1 - under * 0.9; }
+      // T-Zone und Nasenspitze glänzen etwas mehr
+      rough -= gs(0, 7.0, 1.62, 0.22) * 0.16 + (ax < 0.35 && y > 7.55 && z > 1.0 ? 0.08 : 0);
+    }
     // Lippen
-    if (lips > 0) { const t = lips * 0.92; r += (lip.r * (0.7 + 0.3 * ao) - r) * t; gg += (lip.g * (0.7 + 0.3 * ao) - gg) * t; b += (lip.b * (0.7 + 0.3 * ao) - b) * t; }
+    if (lips > 0) {
+      rough -= lips * 0.22;
+      const t = lips * 0.92; r += (lip.r * (0.7 + 0.3 * ao) - r) * t; gg += (lip.g * (0.7 + 0.3 * ao) - gg) * t; b += (lip.b * (0.7 + 0.3 * ao) - b) * t;
+    }
     // Bartschatten
     if (stub > 0 && o.stubble > 0) { const t = stub * o.stubble * (0.75 + nn * 0.5); r += (hair.r * 0.6 - r) * t; gg += (hair.g * 0.6 - gg) * t; b += (hair.b * 0.6 - b) * t; }
     // Augenbrauen (mit Haar-Struktur)
     if (brow > 0) {
       const strands = nz(px >> 1, py) * 0.6 + nz(px >> 2, py >> 1) * 0.4;       // feine, waagrechte Härchen
-      const t = Math.min(1, brow * (0.3 + 0.7 * strands) * 0.85);
+      const t = Math.min(1, Math.pow(brow, 1.5) * (0.25 + 0.75 * strands) * 0.62);
       r += (hair.r * 0.8 - r) * t; gg += (hair.g * 0.8 - gg) * t; b += (hair.b * 0.8 - b) * t;
     }
     // Gemalte kurze Haare (Buzz, Fade, Waves)
@@ -188,11 +205,15 @@ function composeSkin(A, o) {
       if (ink) { const t = 0.72; r += (0.07 - r) * t; gg += (0.08 - gg) * t; b += (0.12 - b) * t; }
     }
     d[o4] = Math.min(255, r * 255); d[o4 + 1] = Math.min(255, gg * 255); d[o4 + 2] = Math.min(255, b * 255); d[o4 + 3] = 255;
+    if (scalp > 0.3 && o.painted) rough = 0.8;
+    rd[o4] = rd[o4 + 1] = rd[o4 + 2] = Math.max(0, Math.min(255, rough * (1 + nn * 0.15) * 255)); rd[o4 + 3] = 255;
   }
   g.putImageData(img, 0, 0);
+  rg.putImageData(rimg, 0, 0);
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
   t.anisotropy = 8;
+  t.userData.rough = new THREE.CanvasTexture(rc);
   return t;
 }
 
@@ -257,7 +278,7 @@ function clothCut(mat, trimHex, trimW) {
     sh.vertexShader = 'attribute float cut;\nvarying float vCut;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n  vCut = cut;');
     sh.fragmentShader = 'uniform vec3 trimColor;\nuniform float trimW;\nvarying float vCut;\n' + sh.fragmentShader.replace(
       '#include <map_fragment>',
-      '#include <map_fragment>\n  if (vCut < 0.0) discard;\n  diffuseColor.rgb = mix(diffuseColor.rgb, trimColor, 1.0 - smoothstep(trimW * 0.8, trimW, vCut));',
+      '#include <map_fragment>\n  if (vCut < 0.0) discard;\n  if (!gl_FrontFacing) diffuseColor.rgb *= 0.8;\n  diffuseColor.rgb = mix(diffuseColor.rgb, trimColor, 1.0 - smoothstep(trimW * 0.8, trimW, vCut));',
     );
   };
   return mat;
@@ -478,7 +499,7 @@ export class PlayerView {
       tattoo: rnd() < 0.35 ? pick(['band', 'sleeve']) : null,
     });
     const skinMat = new THREE.MeshPhysicalMaterial({
-      map: skinTex, roughness: 0.62, sheen: 0.35, sheenRoughness: 0.6,
+      map: skinTex, roughnessMap: skinTex.userData.rough, roughness: 1, sheen: 0.35, sheenRoughness: 0.6,
       sheenColor: new THREE.Color(skinHex).lerp(new THREE.Color(0xff9f80), 0.45),
       normalMap: poreNormal(), normalScale: new THREE.Vector2(0.09, 0.09), specularIntensity: 0.45,
       // warmes Streulicht (Fake-Subsurface): hebt Schatten rötlich an statt grau
@@ -520,7 +541,7 @@ export class PlayerView {
     // --- Starre Teile am Kopf: Augen, Haare, Bart
     const headRest = J('head');
     const toHead = (v) => v.sub(headRest);
-    const eyeMat = new THREE.MeshStandardMaterial({ map: A.eyeTex, roughness: 0.35 });
+    const eyeMat = new THREE.MeshStandardMaterial({ map: A.eyeTex, color: 0xe6ddd6, roughness: 0.3 });
     // Hornhaut: fast unsichtbar, aber mit scharfem Glanzpunkt → lebendiger Blick
     const corneaMat = new THREE.MeshPhysicalMaterial({ color: 0xffffff, transparent: true, opacity: 0.06, roughness: 0.02, specularIntensity: 1, clearcoat: 1, clearcoatRoughness: 0.02, depthWrite: false });
     const eyeGeo = (mirror, key = 'index') => {
@@ -684,18 +705,29 @@ export class PlayerView {
     if (this.headband) {
       // geneigte Ebene: vorne knapp unter dem Scheitel, hinten tiefer (wie ein echtes Stirnband); Kanten pro Pixel
       let zMid = 0; for (let i = 0; i < n; i++) zMid += P(i).z / n;
-      const hb = new Float32Array(n);
-      for (let i = 0; i < n; i++) { const p = P(i); hb[i] = top - p.y + 0.35 * (p.z - zMid); }
-      const keep = [];
-      for (let i = 0; i < idx.length; i += 3) {
-        const t = [hb[idx[i]], hb[idx[i + 1]], hb[idx[i + 2]]];
-        if (Math.max(...t) > 0.07 && Math.min(...t) < 0.12) keep.push(idx[i], idx[i + 1], idx[i + 2]);
+      // Band aus der geschlossenen Kopf-Oberfläche des Körpers (nicht nur Kopfhaut) → liegt überall glatt an
+      const bb = H.blocks.body, bvb = H.variants[vi].blocks.body;
+      const bp = A.arr(bvb.pos), bn = A.arr(bvb.nrm), sI = A.arr(bb.skinIndex), sW = A.arr(bb.skinWeight), bIdx = A.arr(bb.visible);
+      const hi = BONE(A, 'head');
+      const headW = (i) => { let w = 0; for (let k = 0; k < 4; k++) if (sI[i * 4 + k] === hi) w += sW[i * 4 + k] / 255; return w; };
+      const hbOf = (i) => top - bp[i * 3 + 1] / 16000 + 0.35 * (bp[i * 3 + 2] / 16000 - zMid);
+      const map = new Map(), pos = [], hbA = [], keep = [];
+      const vid = (i) => {
+        if (map.has(i)) return map.get(i);
+        const nn = new THREE.Vector3(bn[i * 3], bn[i * 3 + 1], bn[i * 3 + 2]).normalize();
+        const p = new THREE.Vector3(bp[i * 3] / 16000, bp[i * 3 + 1] / 16000, bp[i * 3 + 2] / 16000).addScaledVector(nn, 0.0045).sub(headRest);
+        map.set(i, hbA.length); pos.push(p.x, p.y, p.z); hbA.push(hbOf(i));
+        return hbA.length - 1;
+      };
+      for (let t = 0; t < bIdx.length; t += 3) {
+        const tri = [bIdx[t], bIdx[t + 1], bIdx[t + 2]];
+        const h = tri.map(hbOf);
+        if (Math.max(...h) < 0.07 || Math.min(...h) > 0.12 || tri.some((i) => headW(i) < 0.6)) continue;
+        keep.push(...tri.map(vid));
       }
-      const pos = new Float32Array(n * 3);
-      for (let i = 0; i < n; i++) { const p = P(i).addScaledVector(N(i), 0.005).sub(headRest); pos.set([p.x, p.y, p.z], i * 3); }
       const g = new THREE.BufferGeometry();
-      g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-      g.setAttribute('hb', new THREE.BufferAttribute(hb, 1));
+      g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pos), 3));
+      g.setAttribute('hb', new THREE.BufferAttribute(new Float32Array(hbA), 1));
       g.setIndex(keep);
       g.computeVertexNormals();
       const bm = this.headband.clone();
