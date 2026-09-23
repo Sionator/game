@@ -9,7 +9,7 @@ import { Q, QUALITY_NAME } from './gfx/quality.js';
 import { buildCourt, buildBall } from './gfx/court.js';
 import { buildHoop } from './gfx/hoop.js';
 import { buildSurroundings, buildSky, skyTexture, FLOODLIGHTS, LAMP_Y } from './gfx/city.js';
-import { PlayerView } from './gfx/character.js';
+import { PlayerView, loadHumanAssets } from './gfx/human.js';
 import { Effects } from './gfx/fx.js';
 
 // Vignette + leichtes Color-Grading (nach dem Tone-Mapping)
@@ -83,6 +83,7 @@ export function createWorld(canvas) {
     scene.add(spot, spot.target);
   });
 
+  loadHumanAssets();                       // Figuren-Daten schon im Menü laden
   const court = buildCourt(scene, Q);
   const ball = buildBall();
   scene.add(ball);

@@ -47,6 +47,7 @@ export class Lobby {
       case 'hello':
         c.name = clean(m.name, 16) || 'Spieler';
         c.color = /^#[0-9a-f]{6}$/i.test(m.color) ? m.color : COLORS[0];
+        c.body = ['m', 'f'].includes(m.body) ? m.body : 'auto';
         break;
       case 'create': {
         const room = this.newRoom(c, m);
@@ -210,7 +211,7 @@ export class Lobby {
     if (colB.toLowerCase() === colA.toLowerCase()) colB = COLORS.find((c) => c.toLowerCase() !== colA.toLowerCase());
     const teamColor = { A: colA, B: colB };
 
-    const players = r.members.map((x) => ({ id: x.id, name: x.name, color: teamColor[x.team], team: x.team, bot: !!x.bot }));
+    const players = r.members.map((x) => ({ id: x.id, name: x.name, color: teamColor[x.team], team: x.team, bot: !!x.bot, body: x.body || 'auto' }));
     const events = [];
     r.events = events;
     r.match = new Match(players, { target: r.target }, (e) => events.push(e));

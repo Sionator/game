@@ -24,9 +24,12 @@ Nachts auf einem Streetball-Court mitten in der Stadt: Crossover, Dunks, Blocks 
 - Echte Ball-Physik (Ring, Brett, Netz), synthetisierte Sounds – keine externen Dateien
 - **Grafik:** Nacht-Court mit Flutlicht, mehreren Schatten, Lichtkegeln, Bloom, spiegelnden Pfützen,
   Graffiti-Wand, Skyline mit Neonschildern und jubelnden Zuschauern; ein Netz, das sich um den Ball verformt
-- **Detaillierte Spieler:** durchgehende Haut mit Skelett (Skinning), modellierte Gesichter, viele Frisuren
-  (Afro, Dreads, Cornrows, Twists, Fade, …), Bärte, Tattoos, Sleeves, Stirnbänder, Ketten, Sneaker,
-  Trikots mit Teamname, Nummer und Name auf dem Rücken
+- **Realistische Spieler:** echte Menschmodelle (abgeleitet aus MakeHuman, CC0) mit 54-Knochen-Skelett,
+  7 Körpertypen (Spieler und Spielerinnen, verschiedene Größen und Herkünfte), gebackener Umgebungsverdeckung,
+  Poren, warmer Haut, Augen mit Hornhaut-Glanz, Wimpern und Augenbrauen; Frisuren (Afro, Dreads, Cornrows,
+  Twists, Hightop, Dutt, Fade, Waves, …), Bärte, Tattoos, Sleeves, Stirnbänder, Ketten, Sneaker;
+  Tank-Top-Trikots mit Paspel, Teamname, Nummer und Name auf dem Rücken, weite Shorts
+- Im Menü wählbar: Figur **Zufall / Spieler / Spielerin**
 - **Grafikqualität** im Menü einstellbar (Hoch / Mittel / Niedrig) – am Handy automatisch „Mittel“
 
 ## Steuerung
@@ -98,7 +101,9 @@ Der Port wird über die Umgebungsvariable `PORT` gesetzt.
   Ball-Physik mit Ring-, Brett- und Netz-Kollision, Wurf-Genauigkeit abhängig von Timing, Distanz und Verteidigung.
 - **Client** (`public/`): Three.js. Eigene Bewegung wird lokal vorhergesagt (fühlt sich ohne Verzögerung an),
   der Gegner wird flüssig interpoliert. Die 3D-Welt liegt in `public/js/gfx/` (Court, Korb, Stadt, Figuren, Effekte);
-  alle Modelle und Texturen werden prozedural erzeugt – es gibt keine Asset-Dateien.
+  Court, Stadt und Kleidung werden prozedural erzeugt. Die Figuren-Daten (`public/assets/char/`) erzeugt
+  `node tools/build-character.mjs [Pfad/zu/makehuman/data]` aus den CC0-Daten von
+  [MakeHuman](https://github.com/makehumancommunity/makehuman) (Morphs, Skelett, Gewichte, AO- und Masken-Texturen).
 - **Gemeinsamer Code** (`shared/`): Konstanten und Bewegungsphysik, die Server und Client identisch benutzen.
 
 Tests (Wurfphysik + komplettes Bot-gegen-Bot-Spiel):

@@ -23,6 +23,7 @@ const S = {
   color: store.get('sb_color', COLORS[Math.floor(Math.random() * 4)]),
   target: 11,
   mode: store.get('sb_mode', '1v1'),
+  body: store.get('sb_body', 'auto'),
   room: null,
   myTeam: 'A',
   localHand: null, // vorhergesagte Ballhand bis der Server bestätigt
@@ -67,7 +68,7 @@ function send(m) {
   else if (m.t === 'create' || m.t === 'join' || m.t === 'bot') S.pending = m;
 }
 
-function hello() { send({ t: 'hello', name: S.name || 'Spieler', color: S.color }); }
+function hello() { send({ t: 'hello', name: S.name || 'Spieler', color: S.color, body: S.body }); }
 
 setInterval(() => send({ t: 'ping', ts: performance.now() }), 2000);
 
@@ -126,6 +127,13 @@ function buildMenu() {
     $('#botLabel').textContent = v === '2v2' ? 'Du + Bot gegen 2 Bots:' : 'Üben gegen Bot:';
   };
   for (const b of document.querySelectorAll('#modeSeg button')) b.onclick = () => setMode(b.dataset.v);
+  for (const b of document.querySelectorAll('#bodySeg button')) {
+    b.classList.toggle('on', b.dataset.v === S.body);
+    b.onclick = () => {
+      S.body = b.dataset.v; store.set('sb_body', S.body);
+      for (const x of document.querySelectorAll('#bodySeg button')) x.classList.toggle('on', x === b);
+    };
+  }
   setMode(S.mode === '2v2' ? '2v2' : '1v1');
   for (const b of document.querySelectorAll('#targetSeg button')) {
     b.onclick = () => {
