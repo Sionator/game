@@ -84,22 +84,34 @@ function exprMorphs(A, name, vi) {
   const first = new Int32Array(20000).fill(-1), next = new Int32Array(n).fill(-1);
   for (let j = 0; j < n; j++) { next[j] = first[orig[j]]; first[orig[j]] = j; }
   const k = v.scale / 4000;
+  const add = (arr, U, w) => {
+    const idx = A.arr(U.idx), d = A.arr(U.d);
+    for (let t = 0; t < idx.length; t++) {
+      for (let j = first[idx[t]]; j >= 0; j = next[j]) {
+        arr[j * 3] += d[t * 3] * k * w; arr[j * 3 + 1] += d[t * 3 + 1] * k * w; arr[j * 3 + 2] += d[t * 3 + 2] * k * w;
+      }
+    }
+  };
+  // Gesichtsform-Achsen (je Spieler einmal eingestellt)
+  const shape = [];
+  if (H.shape) for (const ax of H.shape.axes) for (const [sgn, key] of [['+', 'p'], ['-', 'm']]) {
+    const arr = new Float32Array(n * 3);
+    add(arr, H.shape.units[ax][key], 1);
+    const a = new THREE.BufferAttribute(arr, 3);
+    a.name = 'shape:' + ax + sgn;
+    shape.push(a);
+  }
   return E.names.map((u) => {
     const arr = new Float32Array(n * 3);
     for (const r of E.races) {
       const w = (rw[r] || 0) / sum;
       if (!w) continue;
-      const U = E.units[u][r], idx = A.arr(U.idx), d = A.arr(U.d);
-      for (let t = 0; t < idx.length; t++) {
-        for (let j = first[idx[t]]; j >= 0; j = next[j]) {
-          arr[j * 3] += d[t * 3] * k * w; arr[j * 3 + 1] += d[t * 3 + 1] * k * w; arr[j * 3 + 2] += d[t * 3 + 2] * k * w;
-        }
-      }
+      add(arr, E.units[u][r], w);
     }
     const a = new THREE.BufferAttribute(arr, 3);
     a.name = u;
     return a;
-  });
+  }).concat(shape);
 }
 
 // Saum/Paspel entlang der offenen Kanten (Armausschnitt, Halsausschnitt, Saum)
@@ -198,6 +210,12 @@ function composeSkin(A, o) {
       // T-Zone und Nasenspitze glänzen etwas mehr
       rough -= gs(0, 7.0, 1.62, 0.22) * 0.16 + (ax < 0.35 && y > 7.55 && z > 1.0 ? 0.08 : 0);
     }
+    // Lachfalte und Lippenrand leicht abdunkeln (mehr Plastizität)
+    if (y > 6.4 && y < 7.05 && z > 1.0) {
+      const ax2 = Math.abs(x), fold = Math.exp(-(((ax2 - (0.3 + (7.0 - y) * 0.45)) / 0.05) ** 2)) * (y < 6.95 ? 1 : 0) * 0.07;
+      const rim = lips > 0.05 && lips < 0.6 ? 0.06 : 0;
+      r *= 1 - fold - rim; gg *= 1 - fold * 1.1 - rim; b *= 1 - fold - rim;
+    }
     // Lippen
     if (lips > 0) {
       rough -= lips * 0.22;
@@ -208,7 +226,9 @@ function composeSkin(A, o) {
     // Augenbrauen (mit Haar-Struktur)
     if (brow > 0) {
       const strands = nz(px >> 1, py) * 0.6 + nz(px >> 2, py >> 1) * 0.4;       // feine, waagrechte Härchen
-      const t = Math.min(1, Math.pow(brow, 1.5) * (0.25 + 0.75 * strands) * 0.62);
+      // einzelne Härchen: dichter Kern, ausgedünnter Rand; Farbe etwas heller als das Kopfhaar
+      const hairs = nz(px, py >> 1) > 1 - Math.pow(brow, 1.2) * 0.95 ? 1 : 0;
+      const t = Math.min(1, (Math.pow(brow, 2) * 0.3 + hairs * 0.38) * (0.4 + 0.6 * strands));
       r += (hair.r * 0.8 - r) * t; gg += (hair.g * 0.8 - gg) * t; b += (hair.b * 0.8 - b) * t;
     }
     // Gemalte kurze Haare (Buzz, Fade, Waves)
@@ -629,6 +649,24 @@ export class PlayerView {
       skinned(blockGeometry(A, 'lashes', vi), new THREE.MeshStandardMaterial({ map: lashTexture(), color: 0x1a120e, roughness: 0.8, side: THREE.DoubleSide, alphaTest: 0.35 }), false),
     ];
     this.faceMeshes = meshes.filter((m) => m.geometry.morphAttributes.position);
+    this.exprNames = H.expr ? H.expr.names : [];
+    // Individuelle Gesichtsform: aus dem Editor oder zufällig (glockenförmig um 0)
+    const gauss = () => (rnd() + rnd() + rnd() - 1.5) * 0.55;
+    this.shapeW = {};
+    for (const ax of H.shape ? H.shape.axes : []) {
+      const lw = look && look.face ? look.face[ax] : undefined;
+      this.shapeW[ax] = Math.max(-1, Math.min(1, lw !== undefined ? lw : gauss()));
+    }
+    this.applyShape = (m) => {
+      const dict = m.morphTargetDictionary, inf = m.morphTargetInfluences;
+      if (!dict) return;
+      for (const ax in this.shapeW) {
+        const w = this.shapeW[ax] * 0.85;
+        if (dict['shape:' + ax + '+'] !== undefined) inf[dict['shape:' + ax + '+']] = Math.max(0, w);
+        if (dict['shape:' + ax + '-'] !== undefined) inf[dict['shape:' + ax + '-']] = Math.max(0, -w);
+      }
+    };
+    this.faceMeshes.forEach(this.applyShape);
     this.faceW = {}; this.blinkT = 1 + Math.random() * 3; this.blinkP = -1; this.mood = (rnd() - 0.3) * 0.25;
     // Binden in der Ruhepose (alle Knochen ohne Rotation), erst danach Korrekturen/Posen setzen
     this.root.updateMatrixWorld(true);
@@ -656,7 +694,32 @@ export class PlayerView {
     // --- Starre Teile am Kopf: Augen, Haare, Bart
     const headRest = J('head');
     const toHead = (v) => v.sub(headRest);
-    const eyeMat = new THREE.MeshStandardMaterial({ map: A.eyeTex, color: 0xe6ddd6, roughness: 0.3 });
+    // Augapfel prozedural: Iris mit radialen Fasern und dunklem Limbus-Ring, Pupille, leicht rötliche Lederhaut
+    // mit Äderchen, Schatten des Oberlids und dunklere Augenwinkel (Objektraum: Einheitskugel, Blick = +z)
+    const irisHex = look ? look.eyes : pick(ethn === 'caucasian' ? ['#5a3a22', '#7a5a2e', '#4a6f9a', '#4f7b5a', '#7d8a96', '#6b7a3a'] : ['#3b2414', '#5a3a22', '#3b2414', '#7a5a2e']);
+    const eyeMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.25 });
+    eyeMat.customProgramCacheKey = () => 'eyeball';
+    eyeMat.onBeforeCompile = (sh) => {
+      sh.uniforms.irisCol = { value: new THREE.Color(irisHex) };
+      sh.vertexShader = 'varying vec3 vEyeP;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n  vEyeP = position;');
+      sh.fragmentShader = 'uniform vec3 irisCol;\nvarying vec3 vEyeP;\n' +
+        'float eh(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }\n' +
+        sh.fragmentShader.replace('#include <map_fragment>', `
+  vec3 ep = vEyeP / 0.76;                                    // Augapfel ~0.76 Einheiten Radius (quer)
+  float rho = vEyeP.z > 0.0 ? length(ep.xy) : 2.0;          // Abstand von der Sehachse (vorne)
+  float phi = atan(ep.y, ep.x);
+  float fib = 0.75 + 0.25 * eh(vec2(floor(phi * 40.0), 1.0)) + 0.12 * sin(phi * 23.0 + rho * 40.0);
+  vec3 iris = irisCol * fib * (0.6 + 0.8 * smoothstep(0.14, 0.4, rho));    // innen dunkler, außen heller
+  iris = mix(iris, irisCol * 0.22, smoothstep(0.38, 0.45, rho));            // Limbus-Ring
+  vec3 sclera = vec3(0.93, 0.90, 0.87);
+  float vein = smoothstep(0.93, 1.0, eh(vec2(floor(phi * 60.0), floor(rho * 14.0)))) * smoothstep(0.6, 0.95, rho);
+  sclera = mix(sclera, vec3(0.85, 0.45, 0.42), vein * 0.5 + smoothstep(0.7, 1.0, rho) * 0.12);
+  vec3 col = mix(iris, sclera, smoothstep(0.45, 0.49, rho));
+  col = mix(vec3(0.015), col, smoothstep(0.13, 0.16, rho));                // Pupille
+  float lid = 1.0 - 0.45 * smoothstep(0.1, 0.6, ep.y);                     // Schatten vom Oberlid
+  float corner = 1.0 - 0.3 * smoothstep(0.65, 1.0, rho);
+  diffuseColor.rgb *= col * lid * corner;`);
+    };
     // Hornhaut: fast unsichtbar, aber mit scharfem Glanzpunkt → lebendiger Blick
     const corneaMat = new THREE.MeshPhysicalMaterial({ color: 0xffffff, transparent: true, opacity: 0.06, roughness: 0.02, specularIntensity: 1, clearcoat: 1, clearcoatRoughness: 0.02, depthWrite: false });
     const eyeGeo = (mirror, key = 'index') => {
@@ -955,6 +1018,7 @@ export class PlayerView {
       const beardMesh = new THREE.Mesh(g, bmat);
       this.head.add(beardMesh);
       this.faceMeshes.push(beardMesh);
+      this.applyShape(beardMesh);
     }
   }
 
@@ -1354,14 +1418,14 @@ export class PlayerView {
     let blink = 0;
     if (this.blinkP >= 0) { this.blinkP += dt / 0.16; blink = Math.sin(Math.PI * Math.min(1, this.blinkP)); if (this.blinkP >= 1) this.blinkP = -1; }
     const W = this.faceW, k = 1 - Math.exp(-dt * 9);
-    for (const u of this.faceMeshes[0].geometry.morphAttributes.position.map((a) => a.name)) {
+    for (const u of this.exprNames) {
       let t = F[u] || 0;
       if (u === 'eye-left-closure' || u === 'eye-right-closure') { W[u] = Math.min(1, Math.max(t, blink)); continue; }
       W[u] = (W[u] || 0) + (t - (W[u] || 0)) * k;
     }
     for (const m of this.faceMeshes) {
       const dict = m.morphTargetDictionary, inf = m.morphTargetInfluences;
-      for (const u in dict) inf[dict[u]] = W[u] || 0;
+      for (const u of this.exprNames) if (dict[u] !== undefined) inf[dict[u]] = W[u] || 0;
     }
     if (this.jaw) this.jaw.g.position.copy(this.jaw.d).multiplyScalar(W['mouth-open'] || 0);
     // Augen: zum Ziel drehen (begrenzt), sonst leicht umherschauen

@@ -18,11 +18,20 @@ export const LOOK_HAIR = [
 export const LOOK_HAIR_COL = ['#1a1310', '#2b1c13', '#3d2616', '#6b4a2a', '#b08850', '#d9c08a', '#5a2414', '#9a9a9a', '#e8413c', '#2f7cf6'];
 export const LOOK_BEARD = [['none', 'Kein Bart'], ['stubble', 'Stoppeln'], ['goatee', 'Kinnbart'], ['beard', 'Vollbart']];
 export const LOOK_SHOE = ['#f5f5f5', '#111317', '#e11d48', '#f59e0b', '#22c55e', '#2f7cf6', '#a855f7', 'team'];
+// Gesichtsform-Regler (-1 … 1), Namen passend zu den Achsen im Figuren-Build
+export const LOOK_FACE = [
+  ['noseW', 'Nase schmal', 'breit'], ['noseL', 'Nase kurz', 'lang'], ['noseTip', 'Nasenspitze fein', 'rund'], ['noseHump', 'Nasenrücken gerade', 'Höcker'],
+  ['mouthW', 'Mund schmal', 'breit'], ['lipUp', 'Oberlippe dünn', 'voll'], ['lipLo', 'Unterlippe dünn', 'voll'],
+  ['cheeks', 'Wangenknochen flach', 'hoch'], ['chinW', 'Kinn schmal', 'breit'], ['chinP', 'Kinn fliehend', 'markant'],
+  ['chinH', 'Kinn kurz', 'lang'], ['brows', 'Brauen tief', 'hoch'], ['ears', 'Ohren klein', 'groß'],
+];
+export const LOOK_EYES = ['#5a3a22', '#3b2414', '#7a5a2e', '#6b7a3a', '#4f7b5a', '#4a6f9a', '#7d8a96'];
 export const LOOK_TATTOO = [['none', 'Keins'], ['band', 'Armband'], ['sleeve', 'Sleeve']];
 
 export const DEFAULT_LOOK = {
   body: 'm_af', skin: '#7c5038', hair: 'fade', hairCol: '#1a1310', beard: 'stubble', num: 23, shoe: '#f5f5f5',
   headband: false, wristbands: true, chain: false, armSleeve: false, kneeSleeve: false, tattoo: 'none',
+  eyes: '#5a3a22', face: {},
 };
 
 const hex = (v, list, d) => (typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v) && (!list || list.includes(v.toLowerCase())) ? v.toLowerCase() : d);
@@ -44,5 +53,10 @@ export function sanitizeLook(l) {
     headband: !!l.headband, wristbands: !!l.wristbands, chain: !!l.chain,
     armSleeve: !!l.armSleeve, kneeSleeve: !!l.kneeSleeve,
     tattoo: oneOf(l.tattoo, LOOK_TATTOO.map((t) => t[0]), D.tattoo),
+    eyes: hex(l.eyes, LOOK_EYES, D.eyes),
+    face: Object.fromEntries(LOOK_FACE.map(([k]) => {
+      const v = Number(l.face && l.face[k]);
+      return [k, Number.isFinite(v) ? Math.round(Math.max(-1, Math.min(1, v)) * 100) / 100 : 0];
+    })),
   };
 }

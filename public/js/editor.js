@@ -1,6 +1,6 @@
 // Spieler-Editor: Aussehen zusammenstellen, 3D-Vorschau im Canvas, Speichern im Browser
 import {
-  LOOK_BODIES, LOOK_SKIN, LOOK_HAIR, LOOK_HAIR_COL, LOOK_BEARD, LOOK_SHOE, LOOK_TATTOO, DEFAULT_LOOK, sanitizeLook,
+  LOOK_BODIES, LOOK_SKIN, LOOK_HAIR, LOOK_HAIR_COL, LOOK_BEARD, LOOK_SHOE, LOOK_TATTOO, LOOK_FACE, LOOK_EYES, DEFAULT_LOOK, sanitizeLook,
 } from '/shared/look.js';
 
 const $ = (s) => document.querySelector(s);
@@ -43,6 +43,15 @@ export function createEditor({ world, S, store, showScreen, onSave }) {
 
   grid($('#edBody'), LOOK_BODIES.map((b) => [b.id, b]), 'body', ([, b]) => b.name, ([, b]) => b.h);
   swatches($('#edSkin'), LOOK_SKIN, 'skin');
+  swatches($('#edEyes'), LOOK_EYES, 'eyes');
+  const faceEl = $('#edFace');
+  for (const [k, lo, hi] of LOOK_FACE) {
+    const l = document.createElement('label');
+    l.innerHTML = `<span>${lo}</span><input type="range" min="-100" max="100" step="5" data-k="${k}"><span>${hi}</span>`;
+    l.querySelector('input').oninput = (e) => { look.face = { ...look.face, [k]: +e.target.value / 100 }; dirty = 0.25; };
+    faceEl.appendChild(l);
+  }
+  $('#edFaceReset').onclick = () => { look.face = {}; refresh(); };
   grid($('#edHair'), LOOK_HAIR, 'hair', (h) => h[1]);
   swatches($('#edHairCol'), LOOK_HAIR_COL, 'hairCol');
   grid($('#edBeard'), LOOK_BEARD, 'beard', (b) => b[1]);
@@ -60,6 +69,8 @@ export function createEditor({ world, S, store, showScreen, onSave }) {
   function refresh(rebuild = true) {
     look = sanitizeLook(look);
     mark($('#edBody'), look.body); mark($('#edSkin'), look.skin); mark($('#edHair'), look.hair); mark($('#edHairCol'), look.hairCol);
+    mark($('#edEyes'), look.eyes);
+    for (const inp of faceEl.querySelectorAll('input')) inp.value = Math.round((look.face[inp.dataset.k] || 0) * 100);
     mark($('#edBeard'), look.beard); mark($('#edShoe'), look.shoe); mark($('#edTattoo'), look.tattoo);
     for (const b of acc.children) b.classList.toggle('on', !!look[b.dataset.k]);
     $('#edBeardF').style.display = isFemale() ? 'none' : '';
@@ -81,6 +92,7 @@ export function createEditor({ world, S, store, showScreen, onSave }) {
       beard: r(LOOK_BEARD)[0], num: Math.floor(Math.random() * 100), shoe: r(LOOK_SHOE),
       headband: Math.random() < 0.3, wristbands: Math.random() < 0.5, chain: Math.random() < 0.3,
       armSleeve: Math.random() < 0.3, kneeSleeve: Math.random() < 0.2, tattoo: r(LOOK_TATTOO)[0],
+      eyes: r(LOOK_EYES), face: Object.fromEntries(LOOK_FACE.map(([k]) => [k, Math.round((Math.random() * 2 - 1) * 0.7 * 20) / 20])),
     };
     refresh();
   }
@@ -123,10 +135,10 @@ export function createEditor({ world, S, store, showScreen, onSave }) {
       S.camOverride = (c) => {
         const h = view && view.ready ? view.variant.height : 1.95;
         const face = camMode === 'face';
-        const dist = face ? 1.15 : h * 1.75;
+        const dist = face ? 0.8 : h * 1.75;
         const lookY = face ? h - 0.16 : narrow ? h * 0.32 : h * 0.52;
         // Figur rechts vom Panel (Desktop) bzw. oberhalb (Handy) ins Bild rücken
-        const side = narrow ? 0 : face ? -0.36 : -0.62;
+        const side = narrow ? 0 : face ? -0.24 : -0.62;
         camPos.set(SPOT.x, lookY + (face ? 0.02 : 0.15), SPOT.z + dist);
         camLook.set(SPOT.x + side, lookY, SPOT.z);
         c.position.copy(camPos);

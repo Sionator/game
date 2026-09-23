@@ -424,8 +424,13 @@ for (const f of eyeFaces) for (const [a, b, c] of tri(f)) for (const k of [a, b,
   (isCornea(f) ? corneaIdx : eyeIdx).push(eyeKey.get(kk));
 }
 log('Auge', eyeIdx.length / 3, 'Dreiecke, Hornhaut', corneaIdx.length / 3);
+// Mittelpunkt = Mitte der Bounding-Box (der Vertex-Schwerpunkt liegt wegen der dichten Iris zu weit vorn)
 const ecObj = [0, 0, 0]; let erObj = 0;
-for (let i = 0; i < eyePos.length; i += 3) for (let k = 0; k < 3; k++) ecObj[k] += eyePos[i + k] / (eyePos.length / 3);
+for (let k = 0; k < 3; k++) {
+  let mn = Infinity, mx = -Infinity;
+  for (let i = k; i < eyePos.length; i += 3) { mn = Math.min(mn, eyePos[i]); mx = Math.max(mx, eyePos[i]); }
+  ecObj[k] = (mn + mx) / 2;
+}
 for (let i = 0; i < eyePos.length; i += 3) erObj = Math.max(erObj, Math.hypot(eyePos[i] - ecObj[0], eyePos[i + 1] - ecObj[1], eyePos[i + 2] - ecObj[2]));
 const eyeLocal = Float32Array.from(eyePos, (v, i) => (v - ecObj[i % 3]) / erObj);   // Einheitskugel
 const helperEye = (P, s) => {
@@ -757,6 +762,34 @@ for (const u of EXPR) {
     exprN += t.length;
   }
 }
+// Gesichtsform-Achsen (MakeHuman-Detail-Targets): je Achse ein "+" und ein "-" Delta, zur Laufzeit pro Spieler gemischt
+const SHAPE = {
+  noseW: ['nose/nose-scale-horiz-incr', 'nose/nose-scale-horiz-decr'],
+  noseL: ['nose/nose-scale-vert-incr', 'nose/nose-scale-vert-decr'],
+  noseTip: ['nose/nose-point-width-incr', 'nose/nose-point-width-decr'],
+  noseHump: ['nose/nose-hump-incr', 'nose/nose-hump-decr'],
+  mouthW: ['mouth/mouth-scale-horiz-incr', 'mouth/mouth-scale-horiz-decr'],
+  lipLo: ['mouth/mouth-lowerlip-volume-incr', 'mouth/mouth-lowerlip-volume-decr'],
+  lipUp: ['mouth/mouth-upperlip-volume-incr', 'mouth/mouth-upperlip-volume-decr'],
+  chinW: ['chin/chin-width-incr', 'chin/chin-width-decr'],
+  chinP: ['chin/chin-prominent-incr', 'chin/chin-prominent-decr'],
+  chinH: ['chin/chin-height-incr', 'chin/chin-height-decr'],
+  cheeks: [['cheek/l-cheek-bones-incr', 'cheek/r-cheek-bones-incr'], ['cheek/l-cheek-bones-decr', 'cheek/r-cheek-bones-decr']],
+  brows: ['eyebrows/eyebrows-trans-up', 'eyebrows/eyebrows-trans-down'],
+  ears: [['ears/l-ear-scale-incr', 'ears/r-ear-scale-incr'], ['ears/l-ear-scale-decr', 'ears/r-ear-scale-decr']],
+};
+header.shape = { axes: Object.keys(SHAPE), units: {} };
+const sparse = (list) => {
+  const m = new Map();
+  for (const rel of [].concat(list)) for (const [i, dx, dy, dz] of loadTarget(rel + '.target')) {
+    if (i >= NV) continue;
+    const o = m.get(i) || [0, 0, 0]; o[0] += dx; o[1] += dy; o[2] += dz; m.set(i, o);
+  }
+  const ks = [...m.keys()];
+  return { idx: push(Uint16Array.from(ks)), d: push(Int16Array.from(ks.flatMap((k) => m.get(k)), (v) => Math.round(v * 4000))) };
+};
+for (const [ax, [plus, minus]] of Object.entries(SHAPE)) header.shape.units[ax] = { p: sparse(plus), m: sparse(minus) };
+log('Gesichtsform', Object.keys(SHAPE).length, 'Achsen');
 for (const n of ['body', 'lashes', 'beard']) header.blocks[n].orig = push(Uint16Array.from(blocks[n].orig));
 log('Mimik', EXPR.length, 'Einheiten,', exprN, 'Deltas');
 header.eye = { pos: push(eyeLocal), uv: push(Float32Array.from(eyeUv)), index: push(Uint16Array.from(eyeIdx)), cornea: push(Uint16Array.from(corneaIdx)) };

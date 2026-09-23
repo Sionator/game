@@ -173,3 +173,10 @@ body.touch #feed { bottom: 190px; }
   .edview { min-height: 40%; }
   .edview #edCam { top: 10px; right: 10px; width: 180px; }
 }
+
+.edface summary { cursor: pointer; color: var(--text, #e2e8f0); }
+#edFace { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
+#edFace label { display: grid; grid-template-columns: 1fr 120px 1fr; gap: 6px; align-items: center; font-size: .72rem; }
+#edFace label span:last-child { text-align: right; }
+#edFace input[type=range] { width: 100%; padding: 0; accent-color: var(--accent); }
+button.small { font-size: .78rem; padding: 5px 10px; align-self: flex-start; }
