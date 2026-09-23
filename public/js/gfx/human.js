@@ -63,10 +63,43 @@ function blockGeometry(A, name, vi) {
   g.setAttribute('skinWeight', new THREE.BufferAttribute(A.arr(b.skinWeight), 4, true));
   const idx = A.arr(name === 'body' && !all ? b.visible : b.index);
   if (b.cut) g.setAttribute('cut', new THREE.BufferAttribute(A.arr(b.cut), 1));
+  if (name === 'body' || name === 'lashes') {
+    const m = exprMorphs(A, name, vi);
+    if (m) { g.morphAttributes.position = m; g.morphTargetsRelative = true; }
+  }
   g.setIndex(new THREE.BufferAttribute(idx, 1));
   g.computeBoundingSphere();
   A.geoCache.set(key, g);
   return g;
+}
+
+// Mimik-Deltas (MPFB-Einheiten, je Herkunft gemischt) als Morph-Targets für einen Block
+function exprMorphs(A, name, vi) {
+  const H = A.header, E = H.expr, b = H.blocks[name];
+  if (!E || !b.orig) return null;
+  const v = H.variants[vi], orig = A.arr(b.orig), n = b.count;
+  const rw = v.race || { caucasian: 1 };
+  const sum = E.races.reduce((a, r) => a + (rw[r] || 0), 0) || 1;
+  // Basis-Vertex → Block-Vertices (Nähte haben mehrere)
+  const first = new Int32Array(20000).fill(-1), next = new Int32Array(n).fill(-1);
+  for (let j = 0; j < n; j++) { next[j] = first[orig[j]]; first[orig[j]] = j; }
+  const k = v.scale / 4000;
+  return E.names.map((u) => {
+    const arr = new Float32Array(n * 3);
+    for (const r of E.races) {
+      const w = (rw[r] || 0) / sum;
+      if (!w) continue;
+      const U = E.units[u][r], idx = A.arr(U.idx), d = A.arr(U.d);
+      for (let t = 0; t < idx.length; t++) {
+        for (let j = first[idx[t]]; j >= 0; j = next[j]) {
+          arr[j * 3] += d[t * 3] * k * w; arr[j * 3 + 1] += d[t * 3 + 1] * k * w; arr[j * 3 + 2] += d[t * 3 + 2] * k * w;
+        }
+      }
+    }
+    const a = new THREE.BufferAttribute(arr, 3);
+    a.name = u;
+    return a;
+  });
 }
 
 // Saum/Paspel entlang der offenen Kanten (Armausschnitt, Halsausschnitt, Saum)
@@ -595,6 +628,8 @@ export class PlayerView {
       skinned(blockGeometry(A, 'shorts', vi), shortsMat),
       skinned(blockGeometry(A, 'lashes', vi), new THREE.MeshStandardMaterial({ map: lashTexture(), color: 0x1a120e, roughness: 0.8, side: THREE.DoubleSide, alphaTest: 0.35 }), false),
     ];
+    this.faceMeshes = meshes.filter((m) => m.geometry.morphAttributes.position);
+    this.faceW = {}; this.blinkT = 1 + Math.random() * 3; this.blinkP = -1; this.mood = (rnd() - 0.3) * 0.25;
     // Binden in der Ruhepose (alle Knochen ohne Rotation), erst danach Korrekturen/Posen setzen
     this.root.updateMatrixWorld(true);
     for (const m of meshes) m.bind(skeleton);
@@ -636,13 +671,15 @@ export class PlayerView {
       g.computeVertexNormals();
       return g;
     };
+    this.buildMouth(A, vi, headRest);
+    this.eyeBalls = [];
     variant.eyes.forEach((e, k) => {
-      for (const [key, mat] of [['index', eyeMat], ['cornea', corneaMat]]) {
-        const m = new THREE.Mesh(eyeGeo(k === 1, key), mat);
-        m.scale.setScalar(e.r * 0.98);
-        m.position.copy(toHead(new THREE.Vector3(...e.c)));
-        this.head.add(m);
-      }
+      const eg = new THREE.Group();                             // dreht sich zum Blickziel
+      eg.position.copy(toHead(new THREE.Vector3(...e.c)));
+      eg.scale.setScalar(e.r * 0.98);
+      for (const [key, mat] of [['index', eyeMat], ['cornea', corneaMat]]) eg.add(new THREE.Mesh(eyeGeo(k === 1, key), mat));
+      this.head.add(eg);
+      this.eyeBalls.push(eg);
     });
     // --- Schuhe am Fuß
     const shoe = shoeGeometry();
@@ -886,7 +923,13 @@ export class PlayerView {
       const bp = A.arr(bv.pos), bn = A.arr(bv.nrm), bu = A.arr(bb.uv);
       const cnt = bb.count;
       const btex = hairTexture(hairHex, 'coil');
-      const bmat = new THREE.MeshStandardMaterial({ map: btex.map, bumpMap: btex.bump, bumpScale: 3, roughness: 0.9, transparent: true, vertexColors: true, alphaTest: 0.05 });
+      const bmat = new THREE.MeshStandardMaterial({ map: btex.map, bumpMap: btex.bump, bumpScale: 3, roughness: 0.9, vertexColors: true, alphaTest: 0.5 });
+      // Bartrand pro Pixel ausfransen (sonst sieht man die Dreieckskanten als Sägezahn)
+      bmat.customProgramCacheKey = () => 'beardEdge';
+      bmat.onBeforeCompile = (sh) => {
+        sh.fragmentShader = sh.fragmentShader.replace('#include <alphatest_fragment>',
+          '  float bn = fract(sin(dot(floor(vMapUv * 900.0), vec2(12.9898, 78.233))) * 43758.5453);\n  diffuseColor.a = smoothstep(0.3, 0.7, diffuseColor.a + (bn - 0.5) * 0.55);\n#include <alphatest_fragment>');
+      };
       let minY = Infinity, maxY = -Infinity;
       for (let i = 0; i < cnt; i++) { minY = Math.min(minY, bp[i * 3 + 1]); maxY = Math.max(maxY, bp[i * 3 + 1]); }
       const pos = new Float32Array(cnt * 3), colA = new Float32Array(cnt * 4);
@@ -907,7 +950,11 @@ export class PlayerView {
       g.setAttribute('color', new THREE.BufferAttribute(colA, 4));
       g.setIndex(new THREE.BufferAttribute(Uint16Array.from(A.arr(bb.index)), 1));
       g.computeVertexNormals();
-      this.head.add(new THREE.Mesh(g, bmat));
+      const bm = exprMorphs(A, 'beard', vi);
+      if (bm) { g.morphAttributes.position = bm; g.morphTargetsRelative = true; }
+      const beardMesh = new THREE.Mesh(g, bmat);
+      this.head.add(beardMesh);
+      this.faceMeshes.push(beardMesh);
     }
   }
 
@@ -1122,7 +1169,7 @@ export class PlayerView {
       const flail = Math.sin(st2 * 22) * (1 - e);
       const P = {
         // sitzend: ein Knie aufgestellt, das andere Bein flach nach vorn (Hüfte ~17 cm über dem Boden)
-        hipsY: -0.22 - 0.7 * e, hipLx: 0.95 + 0.95 * e, hipRx: 0.25 + 1.25 * e, kneeL: -0.3 - 0.6 * e, kneeR: -0.55 + 0.5 * e,
+        hipsY: -0.22 - 0.7 * e * e, hipLx: 0.95 + 0.95 * Math.sqrt(e), hipRx: 0.25 + 1.25 * e, kneeL: -0.3 - 0.6 * e, kneeR: -0.55 + 0.5 * e,
         hipLz: 0.2, hipRz: -0.2, ankLy: 0, ankRy: 0,
         spineX: -0.35 - 0.2 * e, spineY: 0.2 * flail, pelvisY: 0, pelvisZ: 0.1 * flail, pelvisX: -0.15 * (1 - e),
         shLx: 1.8 * (1 - e) - 0.75 * e + 0.4 * flail, shRx: 2.3 * (1 - e) - 0.75 * e - 0.4 * flail,
@@ -1147,6 +1194,32 @@ export class PlayerView {
     }
 
     // Glätten und anwenden
+    // ---------------- Mimik je Situation
+    const F = {};
+    const both = (u, w) => { F[u.replace('*', 'left')] = w; F[u.replace('*', 'right')] = w; };
+    F['mouth-corner-puller'] = Math.max(0, this.mood);                 // Grundstimmung
+    F['mouth-depression'] = Math.max(0, -this.mood);
+    F['mouth-open'] = 0.04 + 0.03 * Math.max(0, breath);
+    if (A > 0.5) {                                                     // Sprint: Atmen durch den Mund, Anstrengung
+      F['mouth-open'] = 0.18 + 0.12 * Math.abs(Math.sin(t * 5)); both('eyebrows-*-down', 0.25 * A); F['mouth-retraction'] = 0.15;
+    }
+    if (s.defending && !air) { both('eyebrows-*-down', 0.55); both('eye-*-slit', 0.3); F['mouth-compression'] = 0.35; }
+    if (s.hasBall && !shooting && !air) { both('eyebrows-*-down', 0.3); F['mouth-compression'] = 0.2; }
+    if (shooting) { both('eye-*-slit', 0.3); F['mouth-compression'] = 0.5; F['mouth-corner-puller'] = 0; both('eyebrows-*-down', 0.2); }
+    if (s.st === 'dunk') {                                             // Schrei beim Dunk
+      F['mouth-open'] = 0.95; F['mouth-retraction'] = 0.55; F['mouth-elevation'] = 0.4; both('eyebrows-*-down', 0.8);
+      both('nose-*-elevation', 0.5); F['neck-platysma'] = 0.7; both('eye-*-slit', 0.35); F['mouth-corner-puller'] = 0;
+    }
+    if (air && !shooting && s.st !== 'dunk' && !s.hasBall) { F['mouth-open'] = 0.35; both('eyebrows-*-down', 0.4); F['neck-platysma'] = 0.35; }
+    if (this.celebrateT > 0) { F['mouth-corner-puller'] = 1; F['mouth-open'] = 0.55 + 0.2 * Math.sin(t * 9); both('eyebrows-*-up', 0.45); both('eye-*-slit', 0.35); }
+    if (this.fallAmt > 0.1) {                                          // Ankle Breaker: Schreck, dann Frust
+      const late = Math.min(1, this.stunT / 0.6);
+      F['mouth-open'] = 0.6 - 0.35 * late; both('eyebrows-*-inner-up', 0.9); F['mouth-depression'] = 0.5 * late; F['mouth-corner-puller'] = 0;
+      both('eyebrows-*-up', 0.4 * (1 - late));
+    }
+    if (this.emoteT > 0 && this.emoteFace) Object.assign(F, this.emoteFace);
+    this.faceUpdate(dt, F, this.lookTarget && !stun ? this.lookTarget : null);
+
     // Glätten: Beine fast direkt (sonst rutschen die Füße), Oberkörper weich
     // Bein-IK liefert schon stetige Winkel → nach kurzer Überblendzeit ungefiltert übernehmen
     this.ikT = G.legs ? Math.min(1, (this.ikT || 0) + dt * 5) : 0;
@@ -1231,6 +1304,81 @@ export class PlayerView {
     });
   }
 
+  // Mundhöhle + Zahnreihen: sichtbar, wenn der Mund aufgeht; untere Reihe folgt dem Kiefer (Delta von "mouth-open")
+  buildMouth(A, vi, headRest) {
+    const g = blockGeometry(A, 'body', vi), P = g.attributes.position, M = g.morphAttributes.position;
+    if (!M) return;
+    const byName = (n) => M.find((a) => a.name === n);
+    const open = byName('mouth-open'), elev = byName('mouth-elevation');
+    // Unterlippe = größte Mund-auf-Bewegung nahe der Mitte, Oberlippe = größte Anhebung
+    let lo = -1, loD = 0, up = -1, upD = 0;
+    for (let i = 0; i < P.count; i++) {
+      if (Math.abs(P.getX(i)) > 0.006) continue;
+      const d1 = Math.hypot(open.getX(i), open.getY(i), open.getZ(i));
+      const d2 = Math.hypot(elev.getX(i), elev.getY(i), elev.getZ(i));
+      if (d1 > loD && P.getY(i) > P.getY(0) - 1) { loD = d1; lo = i; }
+      if (d2 > upD) { upD = d2; up = i; }
+    }
+    if (lo < 0 || up < 0) return;
+    const U = new THREE.Vector3().fromBufferAttribute(P, up), L = new THREE.Vector3().fromBufferAttribute(P, lo);
+    // Unterlippe liegt knapp unter der Oberlippe; Kinn-Punkte (weit unten) meiden
+    if (U.y - L.y > 0.05) L.set(U.x, U.y - 0.018, U.z - 0.004);
+    const c = U.clone().add(L).multiplyScalar(0.5).sub(headRest);
+    const cav = new THREE.Mesh(new THREE.SphereGeometry(1, 16, 12), new THREE.MeshStandardMaterial({ color: 0x2a0c0c, roughness: 0.9 }));
+    cav.scale.set(0.024, 0.017, 0.022);
+    cav.position.copy(c).add(new THREE.Vector3(0, -0.004, -0.026));
+    this.head.add(cav);
+    const toothMat = new THREE.MeshStandardMaterial({ color: 0xe9e2d4, roughness: 0.35 });
+    const row = (h) => {
+      const t = new THREE.Mesh(new THREE.CylinderGeometry(0.021, 0.021, h, 18, 1, true, -0.85, 1.7), toothMat);
+      t.material.side = THREE.DoubleSide;
+      return t;
+    };
+    const upT = row(0.009);
+    upT.position.copy(c).add(new THREE.Vector3(0, 0.002, -0.028));
+    this.head.add(upT);
+    const jaw = new THREE.Group();
+    const loT = row(0.008);
+    loT.position.copy(c).add(new THREE.Vector3(0, -0.008, -0.03));
+    jaw.add(loT);
+    this.head.add(jaw);
+    this.jaw = { g: jaw, d: new THREE.Vector3(open.getX(lo), open.getY(lo), open.getZ(lo)).multiplyScalar(0.8) };
+  }
+
+  // Mimik: Zielgewichte je Einheit glätten, Blinzeln, Augen folgen dem Blickziel
+  faceUpdate(dt, F, look) {
+    if (!this.faceMeshes || !this.faceMeshes.length) return;
+    // Blinzeln alle 2–5 s (bei geschlossenen Augen nicht nötig)
+    this.blinkT -= dt;
+    if (this.blinkT <= 0 && this.blinkP < 0) { this.blinkP = 0; this.blinkT = 2 + Math.random() * 3 + (Math.random() < 0.15 ? -1.8 : 0); }
+    let blink = 0;
+    if (this.blinkP >= 0) { this.blinkP += dt / 0.16; blink = Math.sin(Math.PI * Math.min(1, this.blinkP)); if (this.blinkP >= 1) this.blinkP = -1; }
+    const W = this.faceW, k = 1 - Math.exp(-dt * 9);
+    for (const u of this.faceMeshes[0].geometry.morphAttributes.position.map((a) => a.name)) {
+      let t = F[u] || 0;
+      if (u === 'eye-left-closure' || u === 'eye-right-closure') { W[u] = Math.min(1, Math.max(t, blink)); continue; }
+      W[u] = (W[u] || 0) + (t - (W[u] || 0)) * k;
+    }
+    for (const m of this.faceMeshes) {
+      const dict = m.morphTargetDictionary, inf = m.morphTargetInfluences;
+      for (const u in dict) inf[dict[u]] = W[u] || 0;
+    }
+    if (this.jaw) this.jaw.g.position.copy(this.jaw.d).multiplyScalar(W['mouth-open'] || 0);
+    // Augen: zum Ziel drehen (begrenzt), sonst leicht umherschauen
+    if (this.eyeBalls) {
+      let yaw = Math.sin(this.time * 0.37) * 0.12, pitch = Math.sin(this.time * 0.23) * 0.05;
+      if (look) {
+        this.head.updateWorldMatrix(true, false);
+        const v = this._v.copy(look); this.head.worldToLocal(v);
+        const e = this.eyeBalls[0].position;
+        v.sub(e);
+        yaw = Math.atan2(v.x, Math.max(0.05, v.z)); pitch = -Math.atan2(v.y, Math.hypot(v.x, v.z));
+      }
+      yaw = Math.max(-0.45, Math.min(0.45, yaw)); pitch = Math.max(-0.3, Math.min(0.3, pitch));
+      for (const eb of this.eyeBalls) { eb.rotation.y += (yaw - eb.rotation.y) * Math.min(1, dt * 14); eb.rotation.x += (pitch - eb.rotation.x) * Math.min(1, dt * 14); }
+    }
+  }
+
   // Pose-Winkel (Modellraum-Achsen) auf das Skelett anwenden
   applyPose(q) {
     const R = (bone, x, y, z) => {
@@ -1296,6 +1444,9 @@ export class PlayerView {
     const k = 1 - Math.exp(-dt * 8);
     for (const key in T) this.q[key] = this.q[key] === undefined ? T[key] : this.q[key] + (T[key] - this.q[key]) * k;
     this.applyPose(this.q);
+    const F = { 'mouth-corner-puller': Math.max(0, this.mood + 0.1), 'mouth-open': 0.03 };
+    if (cheer > 0) Object.assign(F, { 'mouth-corner-puller': 1, 'mouth-open': 0.6 + 0.25 * Math.sin(ph * 10 + this.phase), 'eyebrows-left-up': 0.5, 'eyebrows-right-up': 0.5 });
+    this.faceUpdate(dt, F, look);
   }
 
   ballAnchor(s, out) {
@@ -1317,6 +1468,17 @@ export class PlayerView {
   }
 
   showEmote(text) {
+    const E = {
+      '🔥': { 'mouth-corner-puller': 0.7, 'eyebrows-left-down': 0.4, 'eyebrows-right-down': 0.4, 'eye-left-slit': 0.3, 'eye-right-slit': 0.3 },
+      '😂': { 'mouth-corner-puller': 1, 'mouth-open': 0.7, 'eye-left-slit': 0.7, 'eye-right-slit': 0.7, 'eyebrows-left-up': 0.3, 'eyebrows-right-up': 0.3 },
+      '💪': { 'mouth-compression': 0.6, 'eyebrows-left-down': 0.6, 'eyebrows-right-down': 0.6, 'neck-platysma': 0.6 },
+      '😤': { 'mouth-compression': 0.7, 'eyebrows-left-down': 1, 'eyebrows-right-down': 1, 'nose-left-elevation': 0.7, 'nose-right-elevation': 0.7 },
+      '👑': { 'mouth-corner-puller': 0.55, 'eyebrows-left-up': 0.5, 'eye-left-slit': 0.25, 'eye-right-slit': 0.25 },
+      '🥶': { 'mouth-retraction': 0.8, 'mouth-open': 0.25, 'eyebrows-left-inner-up': 0.8, 'eyebrows-right-inner-up': 0.8 },
+      GG: { 'mouth-corner-puller': 0.8, 'eyebrows-left-up': 0.3, 'eyebrows-right-up': 0.3 },
+      'Nochmal!': { 'mouth-open': 0.5, 'eyebrows-left-down': 0.7, 'eyebrows-right-down': 0.7, 'mouth-retraction': 0.3 },
+    };
+    this.emoteFace = E[text] || null;
     this.emote.userData.draw(text);
     this.emote.visible = true;
     this.emoteT = 2.4;

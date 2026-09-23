@@ -1,3 +1,4 @@
 Die Figuren-Daten in diesem Ordner wurden aus Assets von MakeHuman erzeugt
-(https://github.com/makehumancommunity/makehuman), die unter CC0 1.0 veröffentlicht sind.
+(https://github.com/makehumancommunity/makehuman) und MPFB2 (https://github.com/makehumancommunity/mpfb2),
+die unter CC0 1.0 veröffentlicht sind.
 Die abgeleiteten Daten stehen ebenfalls unter CC0 1.0.

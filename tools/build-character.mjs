@@ -10,6 +10,8 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 
 const MH = process.argv[2] || '/home/user/makehumancommunity/makehuman/makehuman/data';
+// MPFB2 (ebenfalls CC0) liefert zusätzliche Detail-Targets (Augen) und die Mimik-Einheiten
+const MPFB = process.argv[3] || '/home/user/makehumancommunity/mpfb2/src/mpfb/data';
 const OUT = path.resolve('public/assets/char');
 fs.mkdirSync(OUT, { recursive: true });
 const t0 = Date.now();
@@ -38,10 +40,11 @@ log('Basis-Mesh', NV, 'Vertices,', base.faces.length, 'Faces');
 const targetCache = new Map();
 function loadTarget(rel) {
   if (targetCache.has(rel)) return targetCache.get(rel);
-  const file = `${MH}/targets/${rel}`;
+  const file = rel.startsWith('/') ? rel : fs.existsSync(`${MH}/targets/${rel}`) ? `${MH}/targets/${rel}` : `${MPFB}/targets/${rel}.gz`;
   if (!fs.existsSync(file)) throw new Error('Target fehlt: ' + rel);
   const out = [];
-  for (const l of fs.readFileSync(file, 'utf8').split('\n')) {
+  const txt = file.endsWith('.gz') ? zlib.gunzipSync(fs.readFileSync(file)).toString('utf8') : fs.readFileSync(file, 'utf8');
+  for (const l of txt.split('\n')) {
     if (!l || l[0] === '#') continue;
     const p = l.trim().split(/\s+/);
     if (p.length < 4) continue;
@@ -95,6 +98,8 @@ const VARIANTS = [
   { id: 'm_king', gender: 1, muscle: 1.0, weight: 0.64, height: 0.85, prop: 0.8, h: 2.06, race: { african: 1, caucasian: 0, asian: 0 } },
 ];
 // Gesichtszüge je Variante (MakeHuman-Detail-Targets; beidseitige werden gespiegelt gesetzt)
+// Augen etwas weiter geöffnet, weniger Tränensäcke (wirkt wacher als das MakeHuman-Grundgesicht)
+const FACE_EYES = { 'eyes/eye-height2-incr': 0.45, 'eyes/eye-bag-decr': 0.6, 'eyes/eye-bag-height-decr': 0.3, 'eyes/eye-eyefold-up': 0.25 };
 const FACE_BASE_M = { 'chin/chin-width-incr': 0.3, 'chin/chin-prominent-incr': 0.25, 'cheek/cheek-bones-incr': 0.35, 'head/head-square': 0.25,
   'eyebrows/eyebrows-trans-up': 0.25, 'mouth/mouth-upperlip-volume-incr': 0.2, 'nose/nose-point-width-decr': 0.15, 'neck/neck-scale-horiz-incr': 0.2 };
 const FACE_BASE_F = { 'head/head-oval': 0.45, 'cheek/cheek-bones-incr': 0.4, 'chin/chin-width-decr': 0.25, 'eyebrows/eyebrows-trans-up': 0.3,
@@ -117,13 +122,14 @@ for (const v of VARIANTS) {
     'torso/torso-muscle-dorsi-incr.target': v.gender ? 0.55 : 0.2,
     'stomach/stomach-pregnant-decr.target': 0.4,
   };
-  const face = { ...(v.gender ? FACE_BASE_M : FACE_BASE_F) };
+  const face = { ...(v.gender ? FACE_BASE_M : FACE_BASE_F), ...FACE_EYES };
   for (const [k, w] of Object.entries(FACE[v.id] || {})) face[k] = (face[k] || 0) + w;
   for (const [k, w] of Object.entries(face)) {
     const [dir, name] = k.split('/');
-    const files = fs.existsSync(`${MH}/targets/${dir}/${name}.target`) ? [name] : [`l-${name}`, `r-${name}`];
+    const has = (f) => fs.existsSync(`${MH}/targets/${dir}/${f}.target`) || fs.existsSync(`${MPFB}/targets/${dir}/${f}.target.gz`);
+    const files = has(name) ? [name] : [`l-${name}`, `r-${name}`];
     for (const f of files) {
-      if (!fs.existsSync(`${MH}/targets/${dir}/${f}.target`)) { console.warn('fehlt:', dir, f); continue; }
+      if (!has(f)) { console.warn('fehlt:', dir, f); continue; }
       v.extra[`${dir}/${f}.target`] = Math.min(1, w);
     }
   }
@@ -469,7 +475,7 @@ for (const cfg of VARIANTS) {
     return { pos, nrm };
   };
   const smooth01 = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
-  const out = { id: cfg.id, gender: cfg.gender, shift, blocks: {} };
+  const out = { id: cfg.id, gender: cfg.gender, shift, scale: SCALE, race: cfg.race, blocks: {} };
   for (const [name, blk] of Object.entries(blocks)) {
     let data;
     // Versatz in dm entlang der Hüllen-Normalen: Trikot unten lockerer, Shorts zum Knie hin weiter
@@ -731,16 +737,34 @@ const vis = visibleIndex(body);
 header.blocks.body.visible = push(Uint16Array.from(vis));
 log('Körper sichtbar', vis.length / 3, 'von', body.index.length / 3, 'Dreiecken');
 for (const v of variants) {
-  const vd = { id: v.id, gender: v.gender, height: v.height, joints: v.joints, tails: v.tails, eyes: v.eyes, blocks: {} };
+  const vd = { id: v.id, gender: v.gender, height: v.height, scale: v.scale, race: v.race, joints: v.joints, tails: v.tails, eyes: v.eyes, blocks: {} };
   for (const [name, d] of Object.entries(v.blocks)) vd.blocks[name] = { pos: push(q16(d.pos)), nrm: push(q8(d.nrm)) };
   header.variants.push(vd);
 }
+// Mimik-Einheiten (MPFB2, CC0): je Herkunft dünn besetzte Deltas auf dem Basis-Mesh (dm)
+const EXPR = [
+  'mouth-open', 'mouth-corner-puller', 'mouth-depression', 'mouth-compression', 'mouth-retraction', 'mouth-elevation', 'mouth-pursing',
+  'eyebrows-left-up', 'eyebrows-right-up', 'eyebrows-left-down', 'eyebrows-right-down', 'eyebrows-left-inner-up', 'eyebrows-right-inner-up',
+  'eye-left-closure', 'eye-right-closure', 'eye-left-slit', 'eye-right-slit', 'nose-left-elevation', 'nose-right-elevation', 'neck-platysma',
+];
+header.expr = { names: EXPR, races: ['african', 'asian', 'caucasian'], units: {} };
+let exprN = 0;
+for (const u of EXPR) {
+  header.expr.units[u] = {};
+  for (const r of header.expr.races) {
+    const t = loadTarget(`${MPFB}/targets/expression/units/${r}/${u}.target.gz`).filter(([i]) => i < NV);
+    header.expr.units[u][r] = { idx: push(Uint16Array.from(t, (x) => x[0])), d: push(Int16Array.from(t.flatMap((x) => [x[1], x[2], x[3]]), (v) => Math.round(v * 4000))) };
+    exprN += t.length;
+  }
+}
+for (const n of ['body', 'lashes', 'beard']) header.blocks[n].orig = push(Uint16Array.from(blocks[n].orig));
+log('Mimik', EXPR.length, 'Einheiten,', exprN, 'Deltas');
 header.eye = { pos: push(eyeLocal), uv: push(Float32Array.from(eyeUv)), index: push(Uint16Array.from(eyeIdx)), cornea: push(Uint16Array.from(corneaIdx)) };
 const hjson = Buffer.from(JSON.stringify(header));
 const hl = Buffer.alloc(4); hl.writeUInt32LE(hjson.length);
 const pre = Buffer.concat([hl, hjson]);
 const prePad = Buffer.alloc((4 - (pre.length % 4)) % 4);
 fs.writeFileSync(`${OUT}/char.bin`, Buffer.concat([pre, prePad, ...parts]));
-fs.writeFileSync(`${OUT}/LICENSE.txt`, 'Die Figuren-Daten in diesem Ordner wurden aus Assets von MakeHuman erzeugt\n(https://github.com/makehumancommunity/makehuman), die unter CC0 1.0 veröffentlicht sind.\nDie abgeleiteten Daten stehen ebenfalls unter CC0 1.0.\n');
+fs.writeFileSync(`${OUT}/LICENSE.txt`, 'Die Figuren-Daten in diesem Ordner wurden aus Assets von MakeHuman erzeugt\n(https://github.com/makehumancommunity/makehuman) und MPFB2 (https://github.com/makehumancommunity/mpfb2),\ndie unter CC0 1.0 veröffentlicht sind.\nDie abgeleiteten Daten stehen ebenfalls unter CC0 1.0.\n');
 log('char.bin', ((pre.length + offset) / 1024).toFixed(0), 'KB');
 
