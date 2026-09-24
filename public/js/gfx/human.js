@@ -473,7 +473,7 @@ function clothCut(mat, trimHex, trimW) {
 
 function isLight(col) { return new THREE.Color(col).getHSL({}).l > 0.62; }
 function shade(hex, f) { const c = new THREE.Color(hex).multiplyScalar(f); return '#' + c.getHexString(); }
-const WORDMARKS = ['KINGS', 'BALLERS', 'NIGHT', 'ASPHALT', 'ROCKETS', 'HOOPERS', 'SKYLINE', 'CAGE'];
+const WORDMARKS = ['BALLERS', 'NIGHTOWLS', 'ASPHALT', 'COMETS', 'HOOPERS', 'SKYLINE', 'CAGE', 'BLOCKBOYS'];
 
 function jerseyTexture(color, number, name, wordmark) {
   return canvasTexture(1024, 512, (g, W, H) => {

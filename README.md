@@ -21,16 +21,18 @@ Nachts auf einem Streetball-Court mitten in der Stadt: Crossover, Dunks, Blocks 
 - **Übungsmodus gegen Bots** (Rookie, Street, MVP, King) – im 2v2 mit Bot-Mitspieler
 - **Emotes** (🔥 😂 💪 GG …), Statistiken am Spielende, Revanche-Button
 - **Handy-Steuerung** mit Joystick und Buttons
-- Echte Ball-Physik (Ring, Brett, Netz), synthetisierte Sounds – keine externen Dateien
+- Echte Ball-Physik (Ring, Brett, Netz), synthetisierte Sounds
 - **Grafik:** Nacht-Court mit Flutlicht, mehreren Schatten, Lichtkegeln, Bloom, spiegelnden Pfützen,
   Graffiti-Wand, Skyline mit Neonschildern und realistischen Zuschauern in Freizeitkleidung (sitzen, klatschen, jubeln); ein Netz, das sich um den Ball verformt
-- **Realistische Spieler:** echte Menschmodelle (abgeleitet aus MakeHuman, CC0) mit 54-Knochen-Skelett,
-  7 Körpertypen (Spieler und Spielerinnen, verschiedene Größen und Herkünfte), gebackener Umgebungsverdeckung,
-  Poren, warmer Haut, Augen mit Hornhaut-Glanz, die dem Ball folgen, Wimpern und Augenbrauen; echte Mimik (Blinzeln,
-  Konzentration beim Wurf, Schrei beim Dunk, Jubeln, Schreck beim Ankle Breaker, Gesichter zu den Emotes); Frisuren (Afro, Dreads, Cornrows,
-  Twists, Hightop, Dutt, Fade, Waves, …), Bärte, Tattoos, Sleeves, Stirnbänder, Ketten, Sneaker;
-  Tank-Top-Trikots mit Paspel, Teamname, Nummer und Name auf dem Rücken, weite Shorts
-- Im Menü wählbar: Figur **Zufall / Spieler / Spielerin / Power-Forward** (2,06 m, Vollbart, Stirnband, Kette)
+- **Spieler im Cartoon-Stil (à la Playgrounds):** große Köpfe, große Augen, glatte Haut – gebaut auf echten Menschmodellen
+  (MakeHuman, CC0) mit Skelett, 8 Körpertypen, Mimik (Lächeln, Blinzeln, Konzentration beim Wurf, Schrei beim Dunk, Jubel,
+  Schreck beim Ankle Breaker, Gesichter zu den Emotes) und Augen, die dem Ball folgen; Frisuren (Afro, Dreads, Cornrows,
+  Twists, Hightop, Dutt, Fade, Waves, Cap …), Bärte und Brauen aus echten Haar-Lagen, Tattoos, Sleeves, Stirnbänder, Ketten, Sneaker
+- **Flüssige Animationen:** Füße bleiben beim Laufen am Boden (Bein-IK), Gehen → Sprint, Seitschritte in der Verteidigung,
+  Drehschritte, Wurf mit Ausholen, Dunk, Sprungphasen, Sturz beim Ankle Breaker
+- **Spieler-Editor** (✏️ im Menü): Körper, Hautton, Augenfarbe, 13 Gesichtsform-Regler, Frisur, Haarfarbe, Bart,
+  Rückennummer, Schuhe, Tattoo, Accessoires – mit drehbarer 3D-Vorschau; deine Freunde sehen deinen Spieler genau so
+- Im Menü wählbar: Figur **Zufall / Spieler / Spielerin / Power-Forward / Eigener**
 - Bot-Stufe **King**: ein Power-Forward als stärkster Bot – zieht zum Korb, dunkt, trifft sicher
 - **Grafikqualität** im Menü einstellbar (Hoch / Mittel / Niedrig) – am Handy automatisch „Mittel“
 
@@ -70,6 +72,9 @@ npm start
 ```
 
 Dann im Browser **http://localhost:3000** öffnen.
+
+Tipp: Unter **Grafik** im Menü „Mittel“ oder „Niedrig“ wählen, falls es auf deinem Rechner ruckelt.
+Schon vorhanden? Neueste Version holen mit `git pull` und danach wieder `npm start`.
 
 ## Mit Freunden online spielen
 
