@@ -100,9 +100,13 @@ const VARIANTS = [
 // Gesichtszüge je Variante (MakeHuman-Detail-Targets; beidseitige werden gespiegelt gesetzt)
 // Augen etwas weiter geöffnet, weniger Tränensäcke (wirkt wacher als das MakeHuman-Grundgesicht)
 // Freundlicher, jünger: größere, offenere Augen, keine Tränensäcke, weichere Gesichtszüge
-const FACE_EYES = { 'eyes/eye-height2-incr': 0.55, 'eyes/eye-scale-incr': 0.45, 'eyes/eye-bag-decr': 0.9, 'eyes/eye-bag-height-decr': 0.4,
-  'eyes/eye-eyefold-up': 0.35, 'eyes/eye-push1-out': 0.25, 'head/head-age-decr': 0.45, 'head/head-fat-incr': 0.22,
-  'cheek/cheek-volume-incr': 0.45, 'cheek/cheek-inner-incr': 0.25, 'mouth/mouth-angles-up': 0.35, 'mouth/mouth-dimples-in': 0.2 };
+// Stil à la „Playgrounds“: große runde Augen, kleine Nase, kleiner Mund, weiche, runde Züge
+const FACE_EYES = { 'eyes/eye-height2-incr': 1.1, 'eyes/eye-height1-incr': 0.5, 'eyes/eye-height3-incr': 0.5, 'eyes/eye-scale-incr': 1.5,
+  'eyes/eye-bag-decr': 1.0, 'eyes/eye-bag-height-decr': 0.5, 'eyes/eye-eyefold-up': 0.5, 'eyes/eye-push1-out': 0.3,
+  'head/head-age-decr': 0.8, 'head/head-fat-incr': 0.35, 'head/head-round': 0.35,
+  'cheek/cheek-volume-incr': 0.55, 'cheek/cheek-inner-incr': 0.3, 'mouth/mouth-angles-up': 0.45, 'mouth/mouth-dimples-in': 0.2,
+  'nose/nose-scale-horiz-decr': 0.35, 'nose/nose-scale-vert-decr': 0.4, 'nose/nose-volume-decr': 0.4, 'nose/nose-point-up': 0.3,
+  'mouth/mouth-scale-horiz-decr': 0.2, 'chin/chin-prominent-decr': 0.2, 'ears/ear-scale-decr': 0.2 };
 const FACE_BASE_M = { 'chin/chin-width-incr': 0.3, 'chin/chin-prominent-incr': 0.25, 'cheek/cheek-bones-incr': 0.35, 'head/head-square': 0.25,
   'eyebrows/eyebrows-trans-up': 0.25, 'mouth/mouth-upperlip-volume-incr': 0.2, 'nose/nose-point-width-decr': 0.15, 'neck/neck-scale-horiz-incr': 0.2 };
 const FACE_BASE_F = { 'head/head-oval': 0.45, 'cheek/cheek-bones-incr': 0.4, 'chin/chin-width-decr': 0.25, 'eyebrows/eyebrows-trans-up': 0.3,
@@ -133,7 +137,7 @@ for (const v of VARIANTS) {
     const files = has(name) ? [name] : [`l-${name}`, `r-${name}`];
     for (const f of files) {
       if (!has(f)) { console.warn('fehlt:', dir, f); continue; }
-      v.extra[`${dir}/${f}.target`] = Math.min(1, w);
+      v.extra[`${dir}/${f}.target`] = Math.min(1.6, w);                // leicht übersteuern erlaubt (Stil)
     }
   }
 }
@@ -753,11 +757,13 @@ const fMask = rasterizeAt(FTEX, faceBlk, (p, ao) => [...faceMasks(p, ao), 0], 6)
   body.orig.forEach((v, j) => {
     if (!faceW[j]) return;
     const x = Math.min(FTEX - 1, Math.max(0, Math.floor(faceU[j * 2] * FTEX))), y = Math.min(FTEX - 1, Math.max(0, Math.floor((1 - faceU[j * 2 + 1]) * FTEX)));
-    if (zb[y * FTEX + x] - faceDepth[j] > 0.06) { faceW[j] = 0; hidden++; }
+    if (zb[y * FTEX + x] - faceDepth[j] > 0.14) { faceW[j] = 0; hidden++; }
   });
   log('Gesicht: verdeckte Vertices', hidden);
 }
-const fPos = rasterizeAt(FTEX, faceBlk, (p) => p.map((v, k) => (v - bb.min[k]) / (bb.max[k] - bb.min[k])), 3);
+// eigener, enger Wertebereich → ~6× feinere Positionen (sonst Treppenstufen in Masken wie Lachfalte/Wangenröte)
+const fbb = { min: [-1.6, 5.6, -1.6], max: [1.6, 8.9, 2.0] };
+const fPos = rasterizeAt(FTEX, faceBlk, (p) => p.map((v, k) => (v - fbb.min[k]) / (fbb.max[k] - fbb.min[k])), 3);
 // weiche Maskenränder (Bartschatten, Brauen): Box-Blur in Texturraum
 function blurChannel(img, size, ch, stride, r) {
   const tmp = new Float32Array(size * size);
@@ -829,6 +835,7 @@ header.blocks.shorts.cut = push(Float32Array.from(shorts.basePos, shortsFieldP))
 const vis = visibleIndex(body);
 header.blocks.body.visible = push(Uint16Array.from(vis));
 header.blocks.body.faceUv = push(faceU);
+header.faceBBox = fbb;
 header.blocks.body.faceW = push(faceW);
 log('Körper sichtbar', vis.length / 3, 'von', body.index.length / 3, 'Dreiecken');
 for (const v of variants) {

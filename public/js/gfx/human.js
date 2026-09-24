@@ -92,7 +92,7 @@ float skinHeight(vec2 uv, float lip) {
   float fine = sdNoise(uv * vec2(260.0, 170.0)) * 0.5 * aaF;
   float lines = (sin(uv.x * 2600.0 + sdNoise(uv * 90.0) * 6.0) * 0.5 + 0.5) * aaP;       // Lippenrillen (senkrecht)
   float forehead = smoothstep(0.62, 0.7, uv.y) * (sin(uv.y * 900.0 + sdNoise(uv * 40.0) * 5.0) * 0.5 + 0.5) * 0.25;
-  return mix(pores * 0.12 + fine * 0.08, lines * 0.25, lip) * 0.012;
+  return mix(0.0, lines * 0.08, lip) * 0.012;
 }
 vec3 skinPerturb(vec3 surf_pos, vec3 surf_norm, vec2 dHdxy, float faceDir) {
   vec3 vSigmaX = normalize(dFdx(surf_pos)), vSigmaY = normalize(dFdy(surf_pos));
@@ -264,7 +264,7 @@ function composeSkin(A, o) {
   const rc = document.createElement('canvas'); rc.width = W; rc.height = H;
   const rg = rc.getContext('2d'), rimg = rg.createImageData(W, H), rd = rimg.data;
   const d = img.data, m = IM.mask.data, mb = IM.maskB.data, p = IM.pos.data;
-  const bb = A.header.bbox;
+  const bb = o.imgs && A.header.faceBBox ? A.header.faceBBox : A.header.bbox;
   const sk = rgb(o.skin), lip = rgb(o.lip), hair = rgb(o.hair);
   const sock = rgb(o.sock), sockStripe = rgb(o.sockStripe), dark = rgb('#121418');
   const rnd = mulberry(o.seed);
@@ -286,7 +286,8 @@ function composeSkin(A, o) {
     // Grundton mit AO, leicht rötlich in Falten
     const aoS = Math.pow(ao, 1.35);
     // weiche Verdeckung (tiefe Augenhöhlen wirkten unheimlich), kaum Hautrauschen
-    let r = sk.r * (0.7 + 0.3 * aoS) * (1 + nn * 0.03), gg = sk.g * (0.67 + 0.33 * aoS) * (1 + nn * 0.03), b = sk.b * (0.65 + 0.35 * aoS) * (1 + nn * 0.025);
+    // stilisiert: kaum Rauschen, leicht gesättigter, warmer Grundton
+    let r = sk.r * 1.04 * (0.74 + 0.26 * aoS), gg = sk.g * (0.7 + 0.3 * aoS), b = sk.b * 0.94 * (0.68 + 0.32 * aoS);
     // Gesichtsdetails: durchblutete Wangen, Nase und Ohren, Schatten unter den Augen und in der Lidfalte
     let rough = 0.62;
     if (y > 6.0 && y < 8.0 && z > -0.4) {
@@ -663,7 +664,7 @@ export class PlayerView {
       }
     }
     this.palmR = J('finger3-1.R').sub(J('wrist.R')).multiplyScalar(0.55);
-    this.labelY = variant.height + 0.38;
+    this.labelY = variant.height + 0.6;
     this.scaleK = variant.height / 1.95;
     this.B = {
       root: bones[bi('root')], sp: ['spine05', 'spine04', 'spine03', 'spine02', 'spine01'].map((n) => bones[bi(n)]),
@@ -726,7 +727,7 @@ export class PlayerView {
     const skinMat = new THREE.MeshPhysicalMaterial({
       map: skinTex, roughnessMap: skinTex.userData.rough, roughness: 1, sheen: 0.35, sheenRoughness: 0.6,
       sheenColor: new THREE.Color(skinHex).lerp(new THREE.Color(0xff9f80), 0.45),
-      normalMap: poreNormal(), normalScale: new THREE.Vector2(0.09, 0.09), specularIntensity: 0.45,
+      normalMap: poreNormal(), normalScale: new THREE.Vector2(0.02, 0.02), specularIntensity: 0.35,
       // warmes Streulicht (Fake-Subsurface): hebt Schatten rötlich an statt grau
       emissive: new THREE.Color(0xff9a7a), emissiveMap: skinTex, emissiveIntensity: 0.14,
     });
@@ -797,6 +798,10 @@ export class PlayerView {
     bones.forEach((b, i) => b.quaternion.copy(corr[i]));
     for (const [i, q] of this.fingerRot) bones[i].quaternion.copy(q).multiply(corr[i]);
     this.root.updateMatrixWorld(true);
+    // Stil: großer Kopf (Bobblehead-Proportionen), Hals etwas kräftiger
+    const HEAD_K = crowd ? 1.22 : 1.45;
+    this.B.head.scale.setScalar(HEAD_K);
+    this.B.neck[1].scale.setScalar(1.08);
     // Beinmaße für die IK (Körperraum, Ruhepose nach Korrektur)
     {
       const loc = (b) => this.body.worldToLocal(b.getWorldPosition(new THREE.Vector3()));
